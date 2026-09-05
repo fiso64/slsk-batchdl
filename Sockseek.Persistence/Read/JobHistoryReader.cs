@@ -12,7 +12,10 @@ public sealed record JobHistoryQuery(
     string? Kind = null,
     Guid? WorkflowId = null,
     bool IncludeAll = false,
-    Guid? ParentJobId = null);
+    Guid? ParentJobId = null,
+    Guid? SubmissionId = null,
+    string? SemanticRole = null,
+    bool Archived = false);
 
 public sealed record PersistedJob(
     Guid Id,
@@ -38,7 +41,12 @@ public sealed record PersistedJob(
     DateTimeOffset? CompletedAtUtc,
     long Revision,
     int PayloadSchemaVersion,
-    string? PayloadJson);
+    string? PayloadJson,
+    Guid? SubmissionId = null,
+    string SemanticRole = "Legacy",
+    long? DiscoveryPublicFileCount = null,
+    long? DiscoveryLockedFileCount = null,
+    long? DiscoveryObservedPeerCount = null);
 
 public sealed record PersistedJobPage(IReadOnlyList<PersistedJob> Items, string? NextCursor);
 public sealed record PersistedWorkflowSummary(
@@ -74,7 +82,17 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
         var cursor = DecodeCursor(query.Cursor);
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var jobs = context.Jobs.AsNoTracking().AsQueryable();
+        jobs = query.Archived
+            ? jobs.Where(job => job.SubmissionId != null
+                && context.Submissions.Any(submission =>
+                    submission.Id == job.SubmissionId
+                    && submission.ArchivedAtUtc != null))
+            : jobs.Where(job => job.SubmissionId == null
+                || !context.Submissions.Any(submission =>
+                    submission.Id == job.SubmissionId
+                    && submission.ArchivedAtUtc != null));
         if (query.ParentJobId != null)
             jobs = jobs.Where(job => job.ParentJobId == query.ParentJobId);
         else if (!query.IncludeAll)
@@ -84,6 +102,8 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
         if (query.SkipReason != null) jobs = jobs.Where(job => job.SkipReason == query.SkipReason);
         if (query.Kind != null) jobs = jobs.Where(job => job.Kind == query.Kind);
         if (query.WorkflowId != null) jobs = jobs.Where(job => job.WorkflowId == query.WorkflowId);
+        if (query.SubmissionId != null) jobs = jobs.Where(job => job.SubmissionId == query.SubmissionId);
+        if (query.SemanticRole != null) jobs = jobs.Where(job => job.SemanticRole == query.SemanticRole);
         if (cursor != null)
             jobs = jobs.Where(job => job.DisplayId > cursor.DisplayId
                 || job.DisplayId == cursor.DisplayId && job.Id.CompareTo(cursor.Id) > 0);
@@ -96,16 +116,31 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
             .ConfigureAwait(false);
         bool hasMore = rows.Count > query.Limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);
-        var items = rows.Select(Map).ToArray();
+        var searchMetadata = await LoadSearchMetadataAsync(
+            context,
+            rows,
+            cancellationToken).ConfigureAwait(false);
+        var items = rows.Select(row => Map(
+            row,
+            searchMetadata.GetValueOrDefault(row.Id))).ToArray();
         string? next = hasMore && rows.Count > 0 ? EncodeCursor(rows[^1].DisplayId, rows[^1].Id) : null;
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new PersistedJobPage(items, next);
     }
 
     public async Task<PersistedJob?> GetJobAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var entity = await context.Jobs.AsNoTracking().SingleOrDefaultAsync(job => job.Id == jobId, cancellationToken).ConfigureAwait(false);
-        return entity == null ? null : Map(entity);
+        if (entity == null)
+            return null;
+        var search = await LoadSearchMetadataAsync(
+            context,
+            entity,
+            cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return Map(entity, search);
     }
 
     public async Task<int> GetChildCountAsync(Guid parentJobId, CancellationToken cancellationToken = default)
@@ -124,23 +159,24 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
         if (limit is < 1 or > MaximumPageSize) throw new ArgumentOutOfRangeException(nameof(limit));
         var decoded = DecodeCursor(cursor);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var groups = WorkflowAggregates(context);
         if (decoded != null)
-            groups = groups.Where(group => group.FirstDisplayId > decoded.DisplayId
-                || group.FirstDisplayId == decoded.DisplayId && group.WorkflowId.CompareTo(decoded.Id) > 0);
+            groups = groups.Where(group => group.WorkflowId.CompareTo(decoded.Id) > 0);
         var aggregateRows = await groups
-            .OrderBy(group => group.FirstDisplayId)
-            .ThenBy(group => group.WorkflowId)
+            .OrderBy(group => group.WorkflowId)
             .Take(limit + 1)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         bool hasMore = aggregateRows.Count > limit;
         if (hasMore) aggregateRows.RemoveAt(aggregateRows.Count - 1);
         var workflowRows = await LoadWorkflowSummariesAsync(context, aggregateRows, cancellationToken).ConfigureAwait(false);
-        return new PersistedWorkflowPage(
+        var page = new PersistedWorkflowPage(
             workflowRows,
             hasMore && workflowRows.Count > 0
-                ? EncodeCursor(workflowRows[^1].FirstDisplayId, workflowRows[^1].WorkflowId)
+                ? EncodeCursor(0, workflowRows[^1].WorkflowId)
                 : null);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return page;
     }
 
     public async Task<PersistedWorkflowSummary?> GetWorkflowAsync(
@@ -148,12 +184,14 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
         CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var aggregate = await WorkflowAggregates(context)
             .SingleOrDefaultAsync(workflow => workflow.WorkflowId == workflowId, cancellationToken)
             .ConfigureAwait(false);
         if (aggregate == null)
             return null;
         var rows = await LoadWorkflowSummariesAsync(context, [aggregate], cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return rows[0];
     }
 
@@ -164,10 +202,18 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
     {
         if (displayId <= 0) throw new ArgumentOutOfRangeException(nameof(displayId));
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var job = await context.Jobs.AsNoTracking()
             .SingleOrDefaultAsync(row => row.WorkflowId == workflowId && row.DisplayId == displayId, cancellationToken)
             .ConfigureAwait(false);
-        return job == null ? null : Map(job);
+        if (job == null)
+            return null;
+        var search = await LoadSearchMetadataAsync(
+            context,
+            job,
+            cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return Map(job, search);
     }
 
     private static IQueryable<WorkflowAggregate> WorkflowAggregates(SockseekDbContext context)
@@ -243,7 +289,35 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
         }).ToArray();
     }
 
-    private static PersistedJob Map(Entities.JobEntity job)
+    private static async Task<Dictionary<Guid, Entities.SearchJobEntity>> LoadSearchMetadataAsync(
+        SockseekDbContext context,
+        IReadOnlyList<Entities.JobEntity> jobs,
+        CancellationToken cancellationToken)
+    {
+        Guid[] ids = jobs
+            .Where(job => string.Equals(job.Kind, "Search", StringComparison.Ordinal))
+            .Select(job => job.Id)
+            .ToArray();
+        if (ids.Length == 0)
+            return [];
+        return await context.SearchJobs.AsNoTracking()
+            .Where(search => ids.Contains(search.JobId))
+            .ToDictionaryAsync(search => search.JobId, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static Task<Entities.SearchJobEntity?> LoadSearchMetadataAsync(
+        SockseekDbContext context,
+        Entities.JobEntity job,
+        CancellationToken cancellationToken)
+        => !string.Equals(job.Kind, "Search", StringComparison.Ordinal)
+            ? Task.FromResult<Entities.SearchJobEntity?>(null)
+            : context.SearchJobs.AsNoTracking()
+                .SingleOrDefaultAsync(search => search.JobId == job.Id, cancellationToken);
+
+    private static PersistedJob Map(
+        Entities.JobEntity job,
+        Entities.SearchJobEntity? search = null)
         => new(
             job.Id,
             job.DisplayId,
@@ -268,7 +342,12 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
             FromUnixMilliseconds(job.CompletedAtUtc),
             job.Revision,
             job.PayloadSchemaVersion,
-            job.PayloadJson);
+            job.PayloadJson,
+            job.SubmissionId,
+            job.SemanticRole,
+            search?.ResultCount,
+            search?.LockedFileCount,
+            search?.ObservedPeerCount);
 
     private static DateTimeOffset? FromUnixMilliseconds(long? value)
         => value.HasValue ? DateTimeOffset.FromUnixTimeMilliseconds(value.Value) : null;

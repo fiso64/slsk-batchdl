@@ -11,7 +11,8 @@ public sealed class SearchSession
 {
     private readonly object admissionGate = new();
     private readonly List<SearchRawResult> rawResults = [];
-    private readonly HashSet<PeerPathKey> resultKeys = [];
+    private readonly HashSet<(PeerPathKey Path, SearchResultVisibility Visibility)> resultKeys = [];
+    private readonly HashSet<string> observedPeers = new(StringComparer.Ordinal);
     private TimeProvider timeProvider;
     private int _revision;
     private int _resultCount;
@@ -22,8 +23,10 @@ public sealed class SearchSession
     public Guid JobId { get; }
     public string QueryText { get; }
     public int ResultCount => Volatile.Read(ref _resultCount);
+    public int PublicFileCount => ResultCount;
     public int Revision => Volatile.Read(ref _revision);
     public int LockedFileCount => Volatile.Read(ref _lockedFileCount);
+    public int ObservedPeerCount { get { lock (admissionGate) return observedPeers.Count; } }
     public bool IsComplete => Volatile.Read(ref _isComplete) != 0;
 
     public event Action<SearchRawResult>? RawResultReceived;
@@ -60,7 +63,10 @@ public sealed class SearchSession
     internal IReadOnlyCollection<(SearchResponse Response, Soulseek.File File)> Snapshot()
     {
         lock (admissionGate)
-            return rawResults.Select(result => (result.Response, result.File)).ToList();
+            return rawResults
+                .Where(result => result.Visibility == SearchResultVisibility.Public)
+                .Select(result => (result.Response, result.File))
+                .ToList();
     }
 
     public IReadOnlyList<SearchRawResult> RawSnapshot(long afterSequence = 0)
@@ -68,6 +74,17 @@ public sealed class SearchSession
         lock (admissionGate)
             return rawResults
                 .Where(x => x.Sequence > afterSequence)
+                .ToList();
+    }
+
+    public IReadOnlyList<SearchRawResult> RawSnapshot(long afterSequence, int limit)
+    {
+        if (limit < 1)
+            throw new ArgumentOutOfRangeException(nameof(limit));
+        lock (admissionGate)
+            return rawResults
+                .Where(x => x.Sequence > afterSequence)
+                .Take(limit)
                 .ToList();
     }
 
@@ -135,22 +152,40 @@ public sealed class SearchSession
             if (_isComplete != 0)
                 return;
 
-            _lockedFileCount += response.LockedFileCount;
-
-            if (response.Files.Count == 0)
+            if (response.Files.Count == 0 && response.LockedFiles.Count == 0)
                 return;
 
             var added = new List<SearchResultSnapshot>();
             int revision = _revision;
-            foreach (var file in response.Files)
+            DateTimeOffset observedAtUtc = timeProvider.GetUtcNow();
+            AddFiles(response.Files, SearchResultVisibility.Public);
+            AddFiles(response.LockedFiles, SearchResultVisibility.Locked);
+
+            void AddFiles(
+                IReadOnlyCollection<Soulseek.File> files,
+                SearchResultVisibility visibility)
             {
-                if (resultKeys.Add(new PeerPathKey(response.Username, file.Filename)))
+                foreach (var file in files)
                 {
+                    if (!resultKeys.Add((
+                            new PeerPathKey(response.Username, file.Filename),
+                            visibility)))
+                        continue;
                     revision = ++_revision;
                     long sequence = ++_sequence;
-                    var rawResult = new SearchRawResult(sequence, revision, response, file, timeProvider.GetUtcNow());
+                    var rawResult = new SearchRawResult(
+                        sequence,
+                        revision,
+                        response,
+                        file,
+                        observedAtUtc,
+                        visibility);
                     rawResults.Add(rawResult);
-                    _resultCount++;
+                    if (visibility == SearchResultVisibility.Public)
+                        _resultCount++;
+                    else
+                        _lockedFileCount++;
+                    observedPeers.Add(response.Username);
                     added.Add(CoreSnapshotFactory.CreateSearchResult(rawResult));
 
                     InvokeObservers(RawResultReceived, rawResult, nameof(RawResultReceived));
@@ -186,7 +221,8 @@ public sealed class SearchSession
                 completionRevision,
                 QueryText,
                 _resultCount,
-                _lockedFileCount));
+                _lockedFileCount,
+                observedPeers.Count));
             InvokeObservers(Completed, nameof(Completed));
         }
     }

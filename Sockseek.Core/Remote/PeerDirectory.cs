@@ -111,17 +111,32 @@ public sealed class AlbumFileMatch
     public static AlbumFileMatch WithLazyQuery(Func<SongQuery> queryFactory, FileCandidate candidate)
         => new(queryFactory, candidate);
 
-    private AlbumFileMatch(Func<SongQuery> queryFactory, FileCandidate candidate)
+    internal static AlbumFileMatch WithProjectionEvidence(
+        Func<SongQuery> queryFactory,
+        FileCandidate candidate,
+        SearchConditionFacts conditionFacts,
+        SearchProjectionSortKey sortKey)
+        => new(queryFactory, candidate, conditionFacts, sortKey);
+
+    private AlbumFileMatch(
+        Func<SongQuery> queryFactory,
+        FileCandidate candidate,
+        SearchConditionFacts? conditionFacts = null,
+        SearchProjectionSortKey? sortKey = null)
     {
         ArgumentNullException.ThrowIfNull(queryFactory);
         ArgumentNullException.ThrowIfNull(candidate);
         query = new Lazy<SongQuery>(() => new SongQuery(queryFactory()));
         Candidate = candidate;
+        ConditionFacts = conditionFacts;
+        SortKey = sortKey;
     }
 
     public SongQuery Query => query.Value;
     public FileCandidate Candidate { get; }
     public PeerFileTarget Target => Candidate.Target;
+    internal SearchConditionFacts? ConditionFacts { get; }
+    internal SearchProjectionSortKey? SortKey { get; }
 }
 
 /// <summary>A peer directory composed with the album evidence that selected it.</summary>

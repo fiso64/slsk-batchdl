@@ -30,6 +30,7 @@ public class SearchJob : Job
     public int ResultCount => Session.ResultCount;
     public int Revision => Session.Revision;
     public bool IsComplete => Session.IsComplete;
+    public SearchDefinition? Definition { get; internal set; }
 
     public override SongQuery QueryTrack => NetworkQuery;
     protected override bool DefaultCanBeSkipped => false;
@@ -43,6 +44,7 @@ public class SearchJob : Job
 
         QueryText = queryText;
         Session = new SearchSession(Id, timeProvider, QueryText);
+        SearchObservationSession = Session;
     }
 
     public SearchJob(SongQuery query, bool includeFullResults = false, TimeProvider? timeProvider = null)
@@ -51,6 +53,7 @@ public class SearchJob : Job
         DefaultFileProjection = new FileSearchProjection(query, includeFullResults);
         DefaultAggregateTrackProjection = new AggregateTrackProjection(query);
         Session = new SearchSession(Id, timeProvider, QueryText);
+        SearchObservationSession = Session;
     }
 
     public SearchJob(AlbumQuery query, TimeProvider? timeProvider = null)
@@ -59,6 +62,7 @@ public class SearchJob : Job
         DefaultFolderProjection = new FolderSearchProjection(query);
         DefaultAggregateAlbumProjection = new AggregateAlbumProjection(query);
         Session = new SearchSession(Id, timeProvider, QueryText);
+        SearchObservationSession = Session;
     }
 
     internal IReadOnlyCollection<(Soulseek.SearchResponse Response, Soulseek.File File)> Snapshot()
@@ -203,7 +207,10 @@ public class SearchJob : Job
     }
 
     private static List<SearchProjectionInput> RawInputs(IReadOnlyList<SearchRawResult> rawResults)
-        => rawResults.Select(result => result.ProjectionInput).ToList();
+        => rawResults
+            .Where(result => result.Visibility == SearchResultVisibility.Public)
+            .Select(result => result.ProjectionInput)
+            .ToList();
 
     private static ProjectionCacheKey ProjectionKey(
         string name,
@@ -340,7 +347,10 @@ public class SearchJob : Job
                     return cachedSnapshot;
                 cachedSnapshot = new SearchProjectionSnapshot<FileCandidate>(
                     job.Revision,
-                    projector.SnapshotInputs().Select(input => input.ToFileCandidate()).ToList(),
+                    projector.SnapshotProjectedFiles()
+                        .Select(file => file.Candidate.WithProjectionFacts(
+                            file.ConditionFacts))
+                        .ToList(),
                     job.IsComplete);
                 return cachedSnapshot;
             }

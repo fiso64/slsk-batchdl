@@ -189,8 +189,126 @@ public sealed class ExactFileTransferRunnerTests
         }
     }
 
+    [TestMethod]
+    public async Task FailureAfterProgress_ReportsTheCurrentTransferredByteCount()
+    {
+        const string username = "Peer";
+        const string filename = @"Share\File.bin";
+        var client = new MockSoulseekClient([Response(username, filename)]);
+        client.AfterDownloadProgress = (_, _) => throw new IOException("failed after progress");
+        var (runner, _, events) = CreateRunner(client);
+        var target = Target(username, filename);
+        var owner = new RemoteFileJob(target);
+        string root = CreateTempDirectory();
+        TransferFailedChange? failed = null;
+        events.TransferFailed += change => failed = change;
+
+        try
+        {
+            var settings = new TransferSettings { NoIncompleteExt = true, UnknownErrorRetries = 0 };
+            await Assert.ThrowsExactlyAsync<IOException>(() => runner.DownloadFile(
+                target, Path.Combine(root, "file.bin"), owner,
+                settings, root,
+                new TransferSettings().MaxStaleTime, publishToDuplicateCache: false));
+
+            Assert.IsNotNull(failed);
+            Assert.AreEqual(target.Size, owner.BytesTransferred);
+            Assert.AreEqual(target.Size, failed.Transfer.BytesTransferred);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void PublishingReplacement_InvalidatesEveryPriorIdentityForThatPath()
+    {
+        string root = CreateTempDirectory();
+        string output = Path.Combine(root, "file.bin");
+        var cache = new DownloadedFileCache();
+        var first = Target("first-peer", @"Share\First.bin");
+        var second = Target("second-peer", @"Share\Second.bin");
+        try
+        {
+            System.IO.File.WriteAllBytes(output, new byte[16]);
+            cache.Publish(output, first);
+            System.IO.File.WriteAllBytes(output, Enumerable.Repeat((byte)1, 16).ToArray());
+            cache.Publish(output, second);
+
+            Assert.IsFalse(cache.TryGetReusable(first, out _));
+            Assert.IsTrue(cache.TryGetReusable(second, out var retained));
+            Assert.AreEqual(Path.GetFullPath(output), retained.OutputPath);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task ConcurrentDifferentTargets_SharingOutput_DoNotOverwriteWhenSkipExistingApplies()
+    {
+        var firstTarget = Target("first-peer", @"Share\First.bin");
+        var secondTarget = Target("second-peer", @"Share\Second.bin");
+        var client = new MockSoulseekClient(
+        [
+            Response(firstTarget.Username, firstTarget.Filename),
+            Response(secondTarget.Username, secondTarget.Filename),
+        ]);
+        var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.BeforeDownloadStartsAsync = async (_, remotePath, cancellationToken) =>
+        {
+            if (remotePath != firstTarget.Filename)
+                return;
+            firstEntered.TrySetResult();
+            await releaseFirst.Task.WaitAsync(cancellationToken);
+        };
+        var cache = new DownloadedFileCache();
+        var (runner, _, _) = CreateRunner(client, cache);
+        string root = CreateTempDirectory();
+        string output = Path.Combine(root, "file.bin");
+        var settings = new TransferSettings { NoIncompleteExt = true };
+
+        try
+        {
+            Task<ExactFileTransferOutcome> first = runner.DownloadFile(
+                firstTarget,
+                output,
+                new RemoteFileJob(firstTarget),
+                settings,
+                root,
+                settings.MaxStaleTime,
+                allowOverwrite: true,
+                protectPublishedOutput: true);
+            await firstEntered.Task;
+            Task<ExactFileTransferOutcome> second = runner.DownloadFile(
+                secondTarget,
+                output,
+                new RemoteFileJob(secondTarget),
+                settings,
+                root,
+                settings.MaxStaleTime,
+                allowOverwrite: true,
+                protectPublishedOutput: true);
+
+            releaseFirst.TrySetResult();
+            Assert.AreEqual(ExactFileTransferStatus.Completed, (await first).Status);
+            Assert.AreEqual(ExactFileTransferStatus.AlreadyExists, (await second).Status);
+            Assert.AreEqual(1, client.DownloadCallCount);
+            Assert.IsTrue(cache.TryGetReusable(firstTarget, out _));
+            Assert.IsFalse(cache.TryGetReusable(secondTarget, out _));
+        }
+        finally
+        {
+            releaseFirst.TrySetResult();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static (ExactPeerFileTransferRunner Runner, ActiveDownloadTracker Active, DownloadEvents Events)
-        CreateRunner(MockSoulseekClient client)
+        CreateRunner(MockSoulseekClient client, DownloadedFileCache? downloadedFiles = null)
     {
         var engineSettings = new EngineSettings { Username = "test", Password = "test" };
         var active = new ActiveDownloadTracker();
@@ -200,7 +318,7 @@ public sealed class ExactFileTransferRunnerTests
                 client,
                 TestHelpers.CreateMockClientManager(client, engineSettings),
                 active,
-                new DownloadedFileCache(),
+                downloadedFiles ?? new DownloadedFileCache(),
                 events,
                 new StaleDownloadCoordinator(active)),
             active,

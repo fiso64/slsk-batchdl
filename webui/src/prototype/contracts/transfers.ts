@@ -1,33 +1,12 @@
-/**
- * Proposed optional metadata carried by generic transfer DTOs in both directions.
- * The daemon already knows these fields for download candidates and upload share
- * catalog entries; production should expose them without WebUI fan-out.
- */
-export interface ProposedTransferFileMetadataDto {
-  extension: string | null;
-  bitrateKbps: number | null;
-  bitDepth: number | null;
-  sampleRateHz: number | null;
-  lengthSeconds: number | null;
-}
+import type { components } from '../../api/generated';
 
-/** Proposed bulk mutation contract. Scope is deliberately explicit. */
-export interface ProposedBulkActionRequestDto {
-  direction: 'download' | 'upload';
-  scope: 'current-view';
-  action: 'cancel' | 'archive-terminal';
-  filter: 'all' | 'queued' | 'in-progress' | 'terminal';
-}
+export type TransferTimelinePageDto = components['schemas']['TransferTimelinePageDto'];
+export type BulkCancelTransfersRequestDto = components['schemas']['BulkCancelTransfersRequestDto'];
+export type ArchiveTransfersRequestDto = components['schemas']['ArchiveTransfersRequestDto'];
+export type SetTransferArchivedRequestDto = components['schemas']['SetTransferArchivedRequestDto'];
+export type TransferCommandReceiptDto = components['schemas']['TransferCommandReceiptDto'];
 
-export interface ProposedBulkActionResponseDto {
-  requestedCount: number;
-  succeededCount: number;
-  rejectedCount: number;
-  failedCount: number;
-}
-
-export interface ProposedTransferHistoryArchiveRequestDto {
-  direction: 'download' | 'upload';
-  transferIds: string[];
-  semantics: 'permanent-delete' | 'archive-from-history';
+export interface TransferArchiveCommand {
+  transferId: string;
+  request: SetTransferArchivedRequestDto;
 }

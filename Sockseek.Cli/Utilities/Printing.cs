@@ -1,8 +1,7 @@
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.Services;
 using Sockseek.Core;
-using SearchResponse = Soulseek.SearchResponse;
-using SlFile = Soulseek.File;
 using Sockseek.Core.Settings;
 
 namespace Sockseek.Cli;
@@ -41,45 +40,8 @@ public static class Printing
         }
     }
 
-    public static string DisplayString(SongQuery query, Soulseek.File? file = null, SearchResponse? response = null,
-        FileConditions? nec = null, FileConditions? pref = null, bool fullpath = false, string customPath = "",
-        bool infoFirst = false, bool showUser = true, bool showSpeed = false)
-    {
-        if (file == null)
-            return query.ToString();
-
-        string sampleRate  = file.SampleRate.HasValue ? $"{(file.SampleRate.Value / 1000.0).Normalize()}kHz" : "";
-        string bitRate     = file.BitRate.HasValue ? $"{file.BitRate}kbps" : "";
-        string fileSize    = $"{file.Size / (float)(1024 * 1024):F1}MB";
-        string user        = showUser && response?.Username != null ? response.Username + "\\" : "";
-        string speed       = showSpeed && response?.Username != null ? $"({response.UploadSpeed / 1024.0 / 1024.0:F2}MB/s) " : "";
-        string fname       = PeerIdentityValidator.ToDisplayText(fullpath
-            ? file.Filename
-            : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(file.Filename) : customPath));
-        string length      = Utils.IsMusicFile(file.Filename) ? (file.Length ?? -1).ToString() + "s" : "";
-        string displayText;
-        if (!infoFirst)
-        {
-            string info = string.Join('/', new string[] { length, sampleRate + bitRate, fileSize }.Where(value => value.Length > 0));
-            displayText = $"{speed}{user}{fname} [{info}]";
-        }
-        else
-        {
-            string info = string.Join('/', new string[] { length.PadRight(4), (sampleRate + bitRate).PadRight(8), fileSize.PadLeft(6) });
-            displayText = $"[{info}] {speed}{user}{fname}";
-        }
-
-        string necStr  = nec  != null ? $"nec:{nec.GetNotSatisfiedName(file, query, response)}, " : "";
-        string prefStr = pref != null ? $"prf:{pref.GetNotSatisfiedName(file, query, response)}" : "";
-        string cond    = "";
-        if (nec != null || pref != null)
-            cond = $" ({(necStr + prefStr).TrimEnd(' ', ',')})";
-
-        return displayText + cond;
-    }
-
     public static string DisplayString(SongQuery query, FileCandidate candidate,
-        FileConditions? nec = null, FileConditions? pref = null, bool fullpath = false, string customPath = "",
+        bool fullpath = false, string customPath = "",
         bool infoFirst = false, bool showUser = true, bool showSpeed = false)
     {
         string sampleRate = candidate.SampleRate.HasValue ? $"{(candidate.SampleRate.Value / 1000.0).Normalize()}kHz" : "";
@@ -105,10 +67,7 @@ public static class Printing
             displayText = $"[{info}] {speed}{user}{fname}";
         }
 
-        string necStr = nec != null ? $"nec:{nec.GetNotSatisfiedName(candidate, query)}, " : "";
-        string prefStr = pref != null ? $"prf:{pref.GetNotSatisfiedName(candidate, query)}" : "";
-        string cond = nec != null || pref != null ? $" ({(necStr + prefStr).TrimEnd(' ', ',')})" : "";
-        return displayText + cond;
+        return displayText;
     }
 
 
@@ -191,8 +150,12 @@ public static class Printing
     }
 
 
-    public static void PrintResults(Job job, PrintOption printOption, SearchSettings search)
-        => ResultPrintFormatter.Print(job, printOption, search);
+    public static void PrintResults(
+        Job job,
+        PrintOption printOption,
+        SearchSettings search,
+        IReadOnlyDictionary<string, int>? reputationSnapshot = null)
+        => ResultPrintFormatter.Print(job, printOption, search, reputationSnapshot);
 
     public static void PrintComplete(JobList queue)
     {
@@ -348,34 +311,41 @@ public static class Printing
     }
 
 
-    public static void PrintTrackResults(IEnumerable<(SearchResponse, Soulseek.File)> orderedResults, SongQuery query,
-        bool full = false, FileConditions? necCond = null, FileConditions? prefCond = null)
-    {
-        Console.ResetColor();
-        int count = 0;
-        foreach (var (response, file) in orderedResults)
-        {
-            WriteLine(DisplayString(query, file, response,
-                full ? necCond : null, full ? prefCond : null,
-                fullpath: full, infoFirst: true, showSpeed: full));
-            count++;
-        }
-        WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
-    }
-
     public static void PrintTrackCandidates(IEnumerable<FileCandidate> orderedResults, SongQuery query,
-        bool full = false, FileConditions? necCond = null, FileConditions? prefCond = null)
+        bool full = false)
     {
         Console.ResetColor();
         int count = 0;
         foreach (var candidate in orderedResults)
         {
-            WriteLine(DisplayString(query, candidate,
-                full ? necCond : null, full ? prefCond : null,
-                fullpath: full, infoFirst: true, showSpeed: full));
+            string display = DisplayString(
+                query,
+                candidate,
+                fullpath: full,
+                infoFirst: true,
+                showSpeed: full);
+            if (full)
+                display += ConditionExplanation(candidate.ProjectionFacts);
+            WriteLine(display);
             count++;
         }
         WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
+    }
+
+    private static string ConditionExplanation(SearchConditionFacts? facts)
+    {
+        if (facts == null)
+            return " (conditions:unavailable)";
+        string necessary = facts.Value.NecessaryConditionsSatisfied
+            ? "Satisfied"
+            : "Unsatisfied";
+        string preferred = facts.Value.UnsatisfiedPreferredConditions.Count == 0
+            ? "Satisfied"
+            : string.Join(
+                ", ",
+                facts.Value.UnsatisfiedPreferredConditions.Select(condition =>
+                    $"{condition} fails"));
+        return $" (nec:{necessary}, prf:{preferred})";
     }
 
 

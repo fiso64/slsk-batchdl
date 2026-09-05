@@ -9,6 +9,7 @@ public sealed record PersistenceWriterOptions
     public int SearchResultCapacityPerSearch { get; init; } = 2_000;
     public int SearchResultGlobalCapacity { get; init; } = 20_000;
     public int IncompleteSearchTrackingCapacity { get; init; } = 1_024;
+    public int SearchMutationQueueCapacity { get; init; } = 256;
     public int SearchResultFlushCount { get; init; } = 200;
     public TimeSpan SearchResultFlushInterval { get; init; } = TimeSpan.FromMilliseconds(200);
     public TimeSpan TransferProgressFlushInterval { get; init; } = TimeSpan.FromSeconds(3);
@@ -25,9 +26,7 @@ public sealed record PersistenceWriterOptions
         if (OrdinaryQueueCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(OrdinaryQueueCapacity));
         if (ProgressEntityCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(ProgressEntityCapacity));
         if (DegradedProjectionCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(DegradedProjectionCapacity));
-        if (SearchResultCapacityPerSearch <= 0) throw new ArgumentOutOfRangeException(nameof(SearchResultCapacityPerSearch));
-        if (SearchResultGlobalCapacity < SearchResultCapacityPerSearch) throw new ArgumentOutOfRangeException(nameof(SearchResultGlobalCapacity));
-        if (IncompleteSearchTrackingCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(IncompleteSearchTrackingCapacity));
+        if (SearchMutationQueueCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(SearchMutationQueueCapacity));
         if (SearchResultFlushCount is < 100 or > 500) throw new ArgumentOutOfRangeException(nameof(SearchResultFlushCount));
         if (SearchResultFlushInterval < TimeSpan.FromMilliseconds(100)
             || SearchResultFlushInterval > TimeSpan.FromMilliseconds(250))

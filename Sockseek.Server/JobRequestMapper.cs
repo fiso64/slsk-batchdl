@@ -26,7 +26,10 @@ public static class JobRequestMapper
             inputType = parsed;
         }
 
-        var job = new ExtractJob(request.Input, inputType);
+        var job = new ExtractJob(request.Input, inputType)
+        {
+            ArtifactId = request.ArtifactId,
+        };
         if (request.ResultDownloadBehavior != null)
             job.ResultDownloadBehaviorPolicy = ToDownloadBehaviorPolicy(request.ResultDownloadBehavior);
 
@@ -136,47 +139,14 @@ public static class JobRequestMapper
             throw new ArgumentException($"{fieldName} is too long; maximum length is {maxLength} characters");
     }
 
-    public static AlbumFolder ToAlbumFolder(AlbumFolderDto dto)
-        => new(
-            dto.Username,
-            dto.FolderPath,
-            dto.Files?.Select(ToAlbumFile).ToList() ?? [])
-        {
-            IsFullyRetrieved = dto.IsFullyRetrieved,
-        };
-
-    private static AlbumFile ToAlbumFile(FileCandidateDto dto)
-    {
-        var candidate = ToFileCandidate(dto);
-        return AlbumFile.WithLazyQuery(
-            () => Searcher.InferSongQuery(candidate.Filename, new SongQuery()),
-            candidate);
-    }
-
-    private static FileCandidate ToFileCandidate(FileCandidateDto dto)
-        => new(
-            new PeerFileTarget(
-                new PeerFileIdentity(dto.Username, dto.Filename),
-                dto.File.Size < 0 ? null : dto.File.Size,
-                dto.File.Extension ?? Path.GetExtension(dto.Filename),
-                dto.File.BitRate,
-                dto.File.BitDepth,
-                dto.File.SampleRate,
-                dto.File.Length,
-                dto.File.Attributes?.Select(attr => new FileAttributeSnapshot(attr.Type, attr.Value)).ToList()),
-            new SearchPeerSnapshot(
-                dto.Username,
-                responseFileCount: 0,
-                dto.Peer.UploadSpeed,
-                dto.Peer.HasFreeUploadSlot));
-
     public static Job CreateJob(JobDraftDto item)
         => item switch
         {
             ExtractJobDraftDto extract => ApplyProvenance(CreateExtractJob(new SubmitExtractJobRequestDto(
                 extract.Input,
                 extract.InputType,
-                ResultDownloadBehavior: extract.ResultDownloadBehavior)), extract.Provenance),
+                ResultDownloadBehavior: extract.ResultDownloadBehavior,
+                ArtifactId: extract.ArtifactId)), extract.Provenance),
             TrackSearchJobDraftDto search => ApplyProvenance(new SearchJob(ToSongQuery(search.SongQuery), search.IncludeFullResults), search.Provenance),
             AlbumSearchJobDraftDto search => ApplyProvenance(new SearchJob(ToAlbumQuery(search.AlbumQuery)), search.Provenance),
             SongJobDraftDto song => ApplyProvenance(ApplyDownloadBehavior(new SongJob(ToSongQuery(song.SongQuery)), song.DownloadBehavior), song.Provenance),
@@ -188,6 +158,42 @@ public static class JobRequestMapper
             RemoteDirectoryJobDraftDto remoteDirectory => ApplyProvenance(CreateRemoteDirectoryJob(remoteDirectory), remoteDirectory.Provenance),
             _ => throw new ArgumentException($"Unsupported job draft type '{item.GetType().Name}'")
         };
+
+    public static DownloadSettingsPatchDto? DraftDownloadSettings(JobDraftDto draft)
+        => draft switch
+        {
+            ExtractJobDraftDto typed => typed.DownloadSettings,
+            TrackSearchJobDraftDto typed => typed.DownloadSettings,
+            AlbumSearchJobDraftDto typed => typed.DownloadSettings,
+            SongJobDraftDto typed => typed.DownloadSettings,
+            AlbumJobDraftDto typed => typed.DownloadSettings,
+            AggregateJobDraftDto typed => typed.DownloadSettings,
+            AlbumAggregateJobDraftDto typed => typed.DownloadSettings,
+            JobListJobDraftDto typed => typed.DownloadSettings,
+            RemoteFileJobDraftDto typed => typed.DownloadSettings,
+            RemoteDirectoryJobDraftDto typed => typed.DownloadSettings,
+            _ => null,
+        };
+
+    public static void ApplyDraftDownloadSettings(
+        JobList jobs,
+        IReadOnlyList<JobDraftDto> drafts,
+        Action<Job, DownloadSettingsPatchDto> apply)
+    {
+        for (int index = 0; index < jobs.Jobs.Count && index < drafts.Count; index++)
+            ApplyDraftDownloadSettings(jobs.Jobs[index], drafts[index], apply);
+    }
+
+    public static void ApplyDraftDownloadSettings(
+        Job job,
+        JobDraftDto draft,
+        Action<Job, DownloadSettingsPatchDto> apply)
+    {
+        if (DraftDownloadSettings(draft) is { } patch)
+            apply(job, patch);
+        if (job is JobList children && draft is JobListJobDraftDto childDraft)
+            ApplyDraftDownloadSettings(children, childDraft.Jobs, apply);
+    }
 
     private static RemoteFileJob CreateRemoteFileJob(RemoteFileJobDraftDto draft)
         => new(
@@ -271,11 +277,11 @@ public static class JobRequestMapper
 
     public static DownloadBehaviorPolicy ToDownloadBehaviorPolicy(DownloadBehaviorPolicyDto dto) => new()
     {
-        Default = dto.Default,
-        Song = dto.Song,
-        Album = dto.Album,
-        Aggregate = dto.Aggregate,
-        AlbumAggregate = dto.AlbumAggregate,
+        Default = dto.Default.ToCore(),
+        Song = dto.Song?.ToCore(),
+        Album = dto.Album?.ToCore(),
+        Aggregate = dto.Aggregate?.ToCore(),
+        AlbumAggregate = dto.AlbumAggregate?.ToCore(),
     };
 
     public static TJob ApplyDownloadBehavior<TJob>(TJob job, DownloadBehaviorPolicyDto? policy)
@@ -339,43 +345,6 @@ public static class JobRequestMapper
             .FirstOrDefault(folder => string.Equals(folder.Username, folderRef.Username, StringComparison.Ordinal)
                 && string.Equals(folder.FolderPath, folderRef.FolderPath, StringComparison.Ordinal));
 
-    public static AlbumFolder ApplySelectedFolderSnapshot(AlbumFolder resolvedFolder, StartFolderDownloadRequestDto request)
-    {
-        if (request.SelectedFolder == null)
-            return resolvedFolder;
-
-        if (!string.Equals(request.SelectedFolder.Username, request.Folder.Username, StringComparison.Ordinal)
-            || !string.Equals(request.SelectedFolder.FolderPath, request.Folder.FolderPath, StringComparison.Ordinal))
-        {
-            throw new ArgumentException("Selected folder snapshot does not match the requested folder reference.");
-        }
-
-        ValidateSelectedFolderSnapshot(request.SelectedFolder);
-
-        return ToAlbumFolder(request.SelectedFolder);
-    }
-
-    private static void ValidateSelectedFolderSnapshot(AlbumFolderDto folder)
-    {
-        if (folder.Files == null)
-            return;
-
-        foreach (var file in folder.Files)
-        {
-            if (!string.Equals(file.Username, folder.Username, StringComparison.Ordinal)
-                || !string.Equals(file.Ref.Username, folder.Username, StringComparison.Ordinal))
-            {
-                throw new ArgumentException("Selected folder snapshot contains a file from a different user.");
-            }
-
-            if (!IsInFolderPath(file.Filename, folder.FolderPath)
-                || !IsInFolderPath(file.Ref.Filename, folder.FolderPath))
-            {
-                throw new ArgumentException("Selected folder snapshot contains a file outside the requested folder.");
-            }
-        }
-    }
-
     public static AlbumFolder? BuildRelatedFolder(AlbumFolderRefDto folderRef, IEnumerable<AlbumFolder> knownFolders)
     {
         var seedFiles = knownFolders
@@ -389,6 +358,217 @@ public static class JobRequestMapper
             ? null
             : new AlbumFolder(folderRef.Username, folderRef.FolderPath, seedFiles);
     }
+
+    public static AlbumFolder? FindAlbumFolderForRetrieval(
+        Job sourceJob,
+        AlbumFolderRefDto folderRef,
+        ConcurrentDictionary<string, int> userSuccessCounts,
+        AlbumQueryDto? albumQuery = null)
+    {
+        if (sourceJob is AlbumJob albumJob)
+        {
+            return albumJob.Results.FirstOrDefault(folder => Matches(folder, folderRef))
+                ?? FindAlbumFolder(sourceJob, folderRef, userSuccessCounts, albumQuery);
+        }
+
+        return FindAlbumFolder(sourceJob, folderRef, userSuccessCounts, albumQuery);
+    }
+
+    public static AlbumFolder? FindAlbumFolder(
+        Job sourceJob,
+        AlbumFolderRefDto folderRef,
+        ConcurrentDictionary<string, int> userSuccessCounts,
+        AlbumQueryDto? albumQuery = null)
+    {
+        if (sourceJob is SearchJob searchJob)
+        {
+            if (searchJob.Config == null)
+                return null;
+
+            FolderSearchProjection? projection = albumQuery != null
+                ? new FolderSearchProjection(ToAlbumQuery(albumQuery))
+                : searchJob.DefaultFolderProjection;
+            if (projection == null)
+                return null;
+
+            IReadOnlyList<AlbumFolder> folders = searchJob
+                .GetAlbumFolders(projection, searchJob.Config.Search)
+                .Items;
+            return folders.FirstOrDefault(folder => Matches(folder, folderRef))
+                ?? BuildRelatedFolder(folderRef, folders);
+        }
+
+        if (sourceJob is AlbumJob albumJob)
+        {
+            return FindProjectedAlbumFolder(albumJob, folderRef, userSuccessCounts)
+                ?? albumJob.Results.FirstOrDefault(folder => Matches(folder, folderRef))
+                ?? BuildRelatedFolder(folderRef, albumJob.Results);
+        }
+
+        if (sourceJob is AlbumAggregateJob aggregateJob)
+        {
+            AlbumQuery? query = albumQuery == null ? null : ToAlbumQuery(albumQuery);
+            List<AlbumFolder> folders = aggregateJob.Albums
+                .Where(album => query == null || AlbumQueriesEqual(album.Query, query))
+                .SelectMany(album => album.Results)
+                .ToList();
+            return folders.FirstOrDefault(folder => Matches(folder, folderRef))
+                ?? BuildRelatedFolder(folderRef, folders);
+        }
+
+        return null;
+    }
+
+    public static FileCandidate? FindFileCandidate(
+        Job sourceJob,
+        FileCandidateRefDto candidateRef,
+        ConcurrentDictionary<string, int> userSuccessCounts)
+    {
+        if (sourceJob is SearchJob searchJob)
+            return FindSearchFileCandidate(searchJob, candidateRef, userSuccessCounts);
+
+        IEnumerable<FileCandidate> candidates = sourceJob switch
+        {
+            SongJob song => song.Candidates ?? [],
+            AggregateJob aggregate => aggregate.Songs
+                .SelectMany(song => song.Candidates ?? []),
+            AlbumJob album => album.Results
+                .SelectMany(folder => folder.Files)
+                .Select(file => file.Candidate),
+            AlbumAggregateJob aggregate => aggregate.Albums
+                .SelectMany(album => album.Results)
+                .SelectMany(folder => folder.Files)
+                .Select(file => file.Candidate),
+            _ => [],
+        };
+        return candidates.FirstOrDefault(candidate => Matches(candidate, candidateRef));
+    }
+
+    public static Job CreateFileSelectionFollowUp(
+        Job sourceJob,
+        FileCandidate candidate,
+        ExtractionMode? requestedMode)
+    {
+        Job followUp = requestedMode == ExtractionMode.General
+            ? new RemoteFileJob(candidate.Target)
+            : new SongJob(new SongQuery(sourceJob switch
+            {
+                SearchJob search => search.DefaultFileProjection?.Query
+                    ?? Searcher.InferSongQuery(
+                        candidate.Filename,
+                        new SongQuery { Title = search.QueryText }),
+                SongJob song => song.Query,
+                AggregateJob aggregate => aggregate.Songs
+                    .FirstOrDefault(song => song.Candidates?.Contains(candidate) == true)?.Query
+                    ?? Searcher.InferSongQuery(candidate.Filename, aggregate.Query),
+                _ => Searcher.InferSongQuery(
+                    candidate.Filename,
+                    sourceJob.QueryTrack ?? new SongQuery()),
+            }))
+            {
+                ResolvedTarget = candidate,
+            };
+        followUp.ItemName = sourceJob.ItemName;
+        followUp.WorkflowId = sourceJob.WorkflowId;
+        return followUp;
+    }
+
+    public static void PropagateSourceMutationToFollowUp(Job sourceJob, Job followUpJob)
+    {
+        // Aggregate-album children already retain the source mutation that owns
+        // the shared aggregate input; copying it to a separate follow-up would
+        // let that follow-up retire the same source twice.
+        if (sourceJob is not AlbumAggregateJob)
+            followUpJob.CopySourceMutationFrom(sourceJob);
+    }
+
+    public static void ApplyManualSongSelection(
+        SongJob song,
+        FileCandidate candidate)
+    {
+        song.ResolvedTarget = candidate;
+        song.Candidates ??= [candidate];
+        if (!song.Candidates.Contains(candidate))
+            song.Candidates.Insert(0, candidate);
+        song.ResetToPending();
+        song.EnsureDisplayId();
+    }
+
+    public static AlbumQuery? ResolveFolderSelectionQuery(
+        Job sourceJob,
+        AlbumQueryDto? query)
+        => query != null
+            ? ToAlbumQuery(query)
+            : sourceJob switch
+            {
+                SearchJob search => search.DefaultFolderProjection?.Query,
+                AlbumJob album => album.Query,
+                AlbumAggregateJob aggregate => aggregate.Query,
+                _ => null,
+            };
+
+    public static AlbumJob CreateAlbumSelectionFollowUp(
+        Job sourceJob,
+        AlbumFolder folder,
+        AlbumQuery query,
+        AlbumFolderDownloadSelectionDto? selection)
+    {
+        string? itemName = sourceJob is SearchJob
+            {
+                DefaultAggregateAlbumProjection: not null,
+            } && !string.IsNullOrWhiteSpace(folder.FolderPath)
+                ? Utils.GetBaseNameSlsk(folder.FolderPath)
+                : sourceJob.ItemName;
+        var followUp = new AlbumJob(new AlbumQuery(query))
+        {
+            ResolvedTarget = folder,
+            ItemName = itemName,
+            WorkflowId = sourceJob.WorkflowId,
+            DownloadBehaviorPolicy = new DownloadBehaviorPolicy(),
+        };
+        ApplyFolderDownloadSelection(followUp, selection);
+        return followUp;
+    }
+
+    private static FileCandidate? FindSearchFileCandidate(
+        SearchJob searchJob,
+        FileCandidateRefDto candidateRef,
+        ConcurrentDictionary<string, int> userSuccessCounts)
+    {
+        if (searchJob.Config == null)
+            return null;
+
+        FileCandidate? candidate = searchJob
+            .GetSortedTrackCandidates(searchJob.Config.Search, userSuccessCounts)
+            .Items
+            .FirstOrDefault(item => Matches(item, candidateRef));
+        if (candidate != null || searchJob.DefaultFolderProjection == null)
+        {
+            return candidate
+                ?? searchJob.RawSnapshot()
+                    .Select(result => result.ProjectionInput.ToFileCandidate())
+                    .FirstOrDefault(item => Matches(item, candidateRef));
+        }
+
+        return searchJob.GetAlbumFolders(searchJob.Config.Search)
+            .Items
+            .SelectMany(folder => folder.Files)
+            .Select(file => file.Candidate)
+            .FirstOrDefault(item => Matches(item, candidateRef));
+    }
+
+    private static bool Matches(AlbumFolder folder, AlbumFolderRefDto folderRef)
+        => string.Equals(folder.Username, folderRef.Username, StringComparison.Ordinal)
+            && string.Equals(folder.FolderPath, folderRef.FolderPath, StringComparison.Ordinal);
+
+    private static bool Matches(FileCandidate candidate, FileCandidateRefDto candidateRef)
+        => string.Equals(candidate.Username, candidateRef.Username, StringComparison.Ordinal)
+            && string.Equals(candidate.Filename, candidateRef.Filename, StringComparison.Ordinal);
+
+    private static bool AlbumQueriesEqual(AlbumQuery left, AlbumQuery right)
+        => string.Equals(left.Artist, right.Artist, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(left.Album, right.Album, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(left.SearchHint, right.SearchHint, StringComparison.OrdinalIgnoreCase);
 
     private static bool PathsAreRelated(string left, string right)
         => left.Equals(right, StringComparison.OrdinalIgnoreCase)

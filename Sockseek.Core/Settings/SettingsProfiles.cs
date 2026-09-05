@@ -72,9 +72,16 @@ public sealed class EngineSettingsPatch
 public sealed class DownloadSettingsPatch
 {
     private readonly List<Action<DownloadSettings>> _operations = [];
+    private readonly HashSet<string> _explicitFields = new(StringComparer.Ordinal);
     public bool HasOperations => _operations.Count > 0;
+    public IReadOnlySet<string> ExplicitFields => _explicitFields;
 
-    public void Add(Action<DownloadSettings> operation) => _operations.Add(operation);
+    public void Add(Action<DownloadSettings> operation, IEnumerable<string>? explicitFields = null)
+    {
+        _operations.Add(operation);
+        if (explicitFields != null)
+            _explicitFields.UnionWith(explicitFields);
+    }
 
     public void ApplyTo(DownloadSettings settings)
     {
@@ -90,7 +97,10 @@ public sealed class ProfileContext
 
 public interface IJobSettingsResolver
 {
-    DownloadSettings Resolve(DownloadSettings inherited, Job job);
+    DownloadSettings Resolve(
+        DownloadSettings inherited,
+        Job job,
+        JobSettingsInheritance inheritance = JobSettingsInheritance.None);
 }
 
 /// <summary>
@@ -111,67 +121,77 @@ public sealed class DefaultJobSettingsResolver : IJobSettingsResolver
 
     private DefaultJobSettingsResolver() { }
 
-    public DownloadSettings Resolve(DownloadSettings inherited, Job job) =>
+    public DownloadSettings Resolve(
+        DownloadSettings inherited,
+        Job job,
+        JobSettingsInheritance inheritance = JobSettingsInheritance.None) =>
         SettingsCloner.Clone(inherited);
 }
 
-public sealed class ProfileJobSettingsResolver : IJobSettingsResolver
+public sealed class ProfileJobSettingsResolver : IJobSettingsResolver, IDetailedJobSettingsRequestResolver
 {
-    private readonly DownloadSettings _baseDefaults;
-    private readonly SettingsProfile? _defaultProfile;
-    private readonly IReadOnlyList<SettingsProfile> _autoProfiles;
-    private readonly IReadOnlyList<SettingsProfile> _namedProfiles;
-    private readonly SettingsProfile? _cliProfile;
-    private readonly ProfileContext _context;
-    private readonly Action<DownloadSettings>? _normalize;
+    private readonly JobSettingsComposer composer;
 
     public ProfileJobSettingsResolver(
-        DownloadSettings baseDefaults,
+        DownloadSettings? baseDefaults,
+        ProfileCatalog catalog,
+        IReadOnlyList<SettingsProfile> namedProfiles,
+        SettingsProfile? cliProfile,
+        ProfileContext? context = null,
+        Action<DownloadSettings>? normalize = null,
+        DownloadSettingsPatch? operatorDefault = null)
+    {
+        composer = new JobSettingsComposer(
+            baseDefaults,
+            catalog,
+            namedProfiles,
+            cliProfile?.Download,
+            context,
+            normalize,
+            operatorDefault);
+    }
+
+    public ProfileJobSettingsResolver(
+        DownloadSettings? baseDefaults,
         SettingsProfile? defaultProfile,
         IReadOnlyList<SettingsProfile> autoProfiles,
         IReadOnlyList<SettingsProfile> namedProfiles,
         SettingsProfile? cliProfile,
         ProfileContext? context = null,
-        Action<DownloadSettings>? normalize = null)
+        Action<DownloadSettings>? normalize = null,
+        DownloadSettingsPatch? operatorDefault = null)
     {
-        _baseDefaults = SettingsCloner.Clone(baseDefaults);
-        _defaultProfile = defaultProfile;
-        _autoProfiles = autoProfiles;
-        _namedProfiles = namedProfiles;
-        _cliProfile = cliProfile;
-        _context = context ?? new ProfileContext();
-        _normalize = normalize;
-
-        foreach (var profile in _autoProfiles.Where(p => p.HasEngineSettings))
-            throw new Exception($"Input error: Auto-profile '{profile.Name}' contains engine settings, which cannot be applied per job");
+        var catalog = new ProfileCatalog
+        {
+            DefaultProfile = defaultProfile,
+            AutoProfiles = autoProfiles,
+            NamedProfiles = autoProfiles.Concat(namedProfiles)
+                .DistinctBy(profile => profile.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+        };
+        composer = new JobSettingsComposer(baseDefaults, catalog, namedProfiles,
+            cliProfile?.Download, context, normalize, operatorDefault);
     }
 
-    public DownloadSettings Resolve(DownloadSettings inherited, Job job)
-    {
-        if (inherited.PrintOption != PrintOption.None)
-            return SettingsCloner.Clone(inherited);
+    public DownloadSettings Resolve(
+        DownloadSettings inherited,
+        Job job,
+        JobSettingsInheritance inheritance = JobSettingsInheritance.None)
+        => composer.Compose(inherited, job, inheritance);
 
-        var matchingAutoProfiles = _autoProfiles
-            .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, inherited, job, _context))
-            .ToList();
+    public DownloadSettings Resolve(
+        DownloadSettings inherited,
+        Job job,
+        JobSettingsInheritance inheritance,
+        JobSettingsRequestLayers? request)
+        => composer.Compose(inherited, job, inheritance, request);
 
-        var settings = SettingsCloner.Clone(_baseDefaults);
-
-        _defaultProfile?.Download.ApplyTo(settings);
-
-        foreach (var profile in matchingAutoProfiles)
-            profile.Download.ApplyTo(settings);
-
-        foreach (var profile in _namedProfiles)
-            profile.Download.ApplyTo(settings);
-
-        _cliProfile?.Download.ApplyTo(settings);
-
-        settings.AppliedAutoProfiles = [.. matchingAutoProfiles.Select(p => p.Name)];
-        _normalize?.Invoke(settings);
-
-        return settings;
-    }
+    public JobSettingsCompositionResult ResolveDetailed(
+        DownloadSettings inherited,
+        Job job,
+        JobSettingsInheritance inheritance = JobSettingsInheritance.None,
+        JobSettingsRequestLayers? request = null)
+        => composer.ComposeDetailed(inherited, job, inheritance, request);
 }
 
 public static class SettingsPatchApplier
@@ -358,7 +378,8 @@ public static partial class ProfileConditionEvaluator
     private static InputType EffectiveInputType(DownloadSettings settings, Job? job)
     {
         string? input = settings.Extraction.Input;
-        InputType configured = settings.Extraction.InputType;
+        InputType configured = job?.SourceInputType
+            ?? settings.Extraction.InputType;
         if (job is ExtractJob extract)
         {
             input = extract.Input;
@@ -422,9 +443,15 @@ public static class SettingsCloner
         clone.Sharing.ExcludedDirectories = [.. source.Sharing.ExcludedDirectories];
         clone.Sharing.Filters = [.. source.Sharing.Filters];
         clone.Uploads = source.Uploads.ShallowClone();
-        clone.PeerAccess = source.PeerAccess.ShallowClone();
-        clone.PeerAccess.BlockedUsernames = [.. source.PeerAccess.BlockedUsernames];
-        clone.PeerAccess.BlockedIpAddresses = [.. source.PeerAccess.BlockedIpAddresses];
+        clone.PeerRestrictions = source.PeerRestrictions.ShallowClone();
+        clone.PeerRestrictions.UploadAccess = source.PeerRestrictions.UploadAccess.ShallowClone();
+        clone.PeerRestrictions.UploadAccess.BlockedUsernames =
+            [.. source.PeerRestrictions.UploadAccess.BlockedUsernames];
+        clone.PeerRestrictions.UploadAccess.BlockedIpAddresses =
+            [.. source.PeerRestrictions.UploadAccess.BlockedIpAddresses];
+        clone.PeerRestrictions.PrivateMessages = source.PeerRestrictions.PrivateMessages.ShallowClone();
+        clone.PeerRestrictions.PrivateMessages.BlockedUsernames =
+            [.. source.PeerRestrictions.PrivateMessages.BlockedUsernames];
         clone.Chat = source.Chat.ShallowClone();
         clone.Chat.AutoJoinRooms = [.. source.Chat.AutoJoinRooms];
         return clone;

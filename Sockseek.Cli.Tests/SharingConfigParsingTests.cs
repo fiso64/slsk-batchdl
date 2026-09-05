@@ -31,7 +31,7 @@ public sealed class SharingConfigParsingTests
     }
 
     [TestMethod]
-    public void ShareAndPolicyLists_UseReplaceAndExplicitAppend()
+    public void ShareAndIndependentRestrictionLists_UseReplaceAndExplicitAppend()
     {
         string parent = Path.Combine(Path.GetTempPath(), "sockseek-config-sharing");
         string first = Path.Combine(parent, "first");
@@ -42,10 +42,12 @@ public sealed class SharingConfigParsingTests
             "--share", $"+ [Second Alias]{second}",
             "--share-filter", "one",
             "--share-filter", "+ two",
-            "--peer-blocked-user", "Alice",
-            "--peer-blocked-user", "+ Bob",
-            "--peer-blocked-ip", "192.0.2.1",
-            "--peer-blocked-ip", "+ 2001:db8::1");
+            "--upload-blocked-user", "Alice",
+            "--upload-blocked-user", "+ Bob",
+            "--upload-blocked-ip", "192.0.2.1",
+            "--upload-blocked-ip", "+ 2001:db8::1",
+            "--private-message-blocked-user", "Carol",
+            "--private-message-blocked-user", "+ Dave");
 
         Assert.AreEqual(2, settings.Sharing.Roots.Count);
         Assert.AreEqual("first", settings.Sharing.Roots[0].EffectiveAlias);
@@ -53,10 +55,13 @@ public sealed class SharingConfigParsingTests
         CollectionAssert.AreEqual(new[] { "one", "two" }, settings.Sharing.Filters);
         CollectionAssert.AreEqual(
             new[] { "Alice", "Bob" },
-            settings.PeerAccess.BlockedUsernames);
+            settings.PeerRestrictions.UploadAccess.BlockedUsernames);
         CollectionAssert.AreEqual(
             new[] { "192.0.2.1", "2001:db8::1" },
-            settings.PeerAccess.BlockedIpAddresses);
+            settings.PeerRestrictions.UploadAccess.BlockedIpAddresses);
+        CollectionAssert.AreEqual(
+            new[] { "Carol", "Dave" },
+            settings.PeerRestrictions.PrivateMessages.BlockedUsernames);
     }
 
     [TestMethod]
@@ -91,7 +96,7 @@ public sealed class SharingConfigParsingTests
     [DataRow("--upload-slots", "0")]
     [DataRow("--upload-speed-limit-kib", "0")]
     [DataRow("--share-rescan-interval", "30s")]
-    [DataRow("--peer-blocked-ip", "192.0.2.0/24")]
+    [DataRow("--upload-blocked-ip", "192.0.2.0/24")]
     public void InvalidSharingValues_FailBinding(string option, string value)
     {
         Assert.ThrowsException<ArgumentException>(() => Bind($"{option}={value}"));
@@ -114,6 +119,8 @@ public sealed class SharingConfigParsingTests
     [DataRow("--shared-folders")]
     [DataRow("--no-modify-share-count")]
     [DataRow("--nmsc")]
+    [DataRow("--peer-blocked-user")]
+    [DataRow("--peer-blocked-ip")]
     public void RemovedManualCountOptions_AreUnknown(string option)
     {
         Assert.ThrowsException<Exception>(() => Bind(option, "1"));

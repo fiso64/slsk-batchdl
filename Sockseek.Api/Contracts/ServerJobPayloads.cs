@@ -68,16 +68,20 @@ public sealed record ExtractJobPayloadDto(
     Guid? ResultJobId) : JobPayloadDto;
 
 /// <summary>
-/// Payload for search jobs. Use the matching /results endpoint for the actual result items.
+/// Payload for search jobs. Use a revision-bound Search View for result items.
 /// </summary>
 /// <param name="QueryText">Raw text submitted to Soulseek.</param>
-/// <param name="DefaultFileProjection">Default file projection used by compatibility file-results endpoints.</param>
-/// <param name="DefaultFolderProjection">Default folder projection used by compatibility folder-results endpoints.</param>
-/// <param name="Revision">Current result revision for matching SearchResultSnapshotDto views.</param>
+/// <param name="DefaultProjection">Typed default Search View projection.</param>
+/// <param name="SongQuery">Immutable file/track query, when applicable.</param>
+/// <param name="AlbumQuery">Immutable album query, when applicable.</param>
+/// <param name="IncludeFullResults">Whether the accepted file projection includes rows that fail necessary conditions.</param>
+/// <param name="Revision">Current raw observation revision.</param>
 public sealed record SearchJobPayloadDto(
     string QueryText,
-    FileSearchProjectionRequestDto? DefaultFileProjection,
-    FolderSearchProjectionRequestDto? DefaultFolderProjection,
+    ServerSearchDefaultProjectionKind DefaultProjection,
+    SongQueryDto? SongQuery,
+    AlbumQueryDto? AlbumQuery,
+    bool IncludeFullResults,
     int ResultCount,
     int Revision,
     bool IsComplete) : JobPayloadDto;

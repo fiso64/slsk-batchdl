@@ -2,7 +2,7 @@ import type { components } from '../api/generated';
 import type { ScenarioId } from '../mock/types';
 import { prototypeNumericId, prototypeUuid } from './ids';
 import type { PrototypeDataLifetime } from './state';
-import type { ProposedShareTreeFilterRequestDto } from './contracts/users';
+import type { PrototypeShareTreeQuery } from './contracts/users';
 import { extension as fileExtension } from './file-types';
 
 export type UserProfileDto = components['schemas']['UserProfileDto'];
@@ -86,7 +86,7 @@ export interface ShareTreeProjectionPage {
   rows: ShareTreeRow[];
   matchingFileCount: number;
   nextCursor: string | null;
-  request: ProposedShareTreeFilterRequestDto;
+  request: PrototypeShareTreeQuery;
 }
 
 const MB = 1_000_000;
@@ -334,6 +334,8 @@ function materializeFixture(id: ScenarioId, raw: RawUserBrowseFixture): UserBrow
   const observedAt = '2026-08-07T08:15:00.000Z';
   const profileDto: UserProfileDto = {
     username: raw.profile.username,
+    uploadAccessBlocked: false,
+    privateMessagesBlocked: false,
     presence: raw.profile.presence,
     status: section('available'),
     info: section(id === 'stress' ? 'timed-out' : 'available', id === 'stress' ? 'Peer info timed out' : null),
@@ -525,7 +527,7 @@ export function flattenShareTree(folders: readonly UserShareFolder[]): ShareTree
 /** Mock daemon boundary: the complete browse artifact is filtered before paging. */
 export function requestShareTreeProjection(
   folders: readonly UserShareFolder[],
-  request: ProposedShareTreeFilterRequestDto,
+  request: PrototypeShareTreeQuery,
 ): ShareTreeProjectionPage {
   const allRows = flattenShareTree(folders);
   const query = request.query?.trim().toLowerCase();

@@ -66,7 +66,7 @@ Current live transfer count is **not** a separate daemon gap: composing bounded 
 | WebUI area | Verified daemon state | Recommendation |
 |---|---|---|
 | **Shares global filter produces one mixed result tree + exact count** | Browse directories now support `parentId`, `query`, and `recursive`; files support `query` **within one directory**. This is a substantial improvement over the earlier audit. There is still no single mixed folder+file search over the complete browse artifact that returns matching leaves/directories with ancestor context and an exact total before pagination; finding file-name matches globally otherwise requires directory fan-out. | **Narrowed browse-projection gap.** Add a mixed browse-search projection over one browse artifact, with ancestor/path context, visibility, exact matching-file count/bytes, and cursor paging. Do not duplicate the existing directory/file browsing APIs. |
-| **Chat/User actions know and mutate per-user block state** | `UserProfileDto` already provides presence, so Chat does not need a dedicated presence endpoint. Blocked usernames remain daemon peer-access configuration; live state exposes only aggregate blocked counts and no endpoint reads or mutates one username’s blocked state. | **Peer-access API gap.** Add per-user peer-access state plus Block/Unblock mutation, shared by Chat and Users rather than modeled as chat-only state. |
+| **Chat/User actions know and mutate per-user restrictions** | `UserProfileDto` already provides presence, so Chat does not need a dedicated presence endpoint. Sockseek needs two independent inbound restrictions: upload access to this daemon's shares and incoming private messages. Neither should prevent this daemon from viewing a peer's profile/shares or sending that peer a message. | **Peer-restriction API gap.** Add one per-user resource with independent upload-access and private-message state/mutations. Chat's Block action changes only private messages; Users can expose both. Project both states into profiles and the private-message state into conversations without per-row fan-out. |
 
 ## Re-audit dispositions: deliberately removed from the gap list
 
@@ -78,7 +78,7 @@ The previous audit also contained several items that no longer belong in a daemo
 - current transfer count is bounded client composition once active-upload hydration is corrected;
 - transfer folder grouping is intentionally presentation over generic transfer rows;
 - Chat destination-rail paging is a frontend pagination/virtualization concern because the daemon collections are already paged;
-- direct-user presence is already available from `UserProfileDto`; only per-user block state/mutation remains a backend gap;
+- direct-user presence is already available from `UserProfileDto`; only the two independent per-user restriction states/mutations remain a backend gap;
 - a retained operational event journal may be useful later, but the current WebUI no longer requires one.
 
 Authentication is likewise outside this audit's scope: the current prototype does not assume daemon-level authentication, so future deployment/auth work is not a present WebUI contract gap.
@@ -94,3 +94,7 @@ Effective settings belong to **preview creation**, not preview commit. A reviewe
 ### Operational activity
 
 The current live activity/state edge is intentionally ephemeral and best-effort and the prototype no longer asks for a persisted Dashboard activity feed. A retained operational event journal may still be useful in a later version for diagnostics/integrations, but it is **not a current WebUI blocker** and is therefore not part of the gap table. If introduced later, keep it separate from authoritative state/event sourcing and cursor-page a small typed/versioned payload with explicit retention; there is no reason to rename today’s live DTO merely to anticipate it.
+
+### API refactor
+
+`Sockseek.Api` should become an implementation-independent remote SDK and stop depending on `Sockseek.Core`. Keep its DTOs, protocol enums, JSON metadata, `SockseekApiClient`, `SockseekLiveClient`, and `DaemonClientStore` together for now; give wire-visible enums API-owned definitions, and move Core↔API mapping and Core-dependent validation to one application-side owner shared by the daemon and local CLI. Add an architecture test preventing public API contracts from referencing Core types. A separate contracts/client assembly split is common but not yet necessary here; introduce it only when independent distribution, browser/AOT compatibility, or another concrete consumer requires it.

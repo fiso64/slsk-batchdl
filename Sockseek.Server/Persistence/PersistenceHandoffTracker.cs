@@ -17,6 +17,7 @@ internal sealed class PersistenceHandoffTracker : IPersistenceMutationObserver
     private readonly Dictionary<Guid, Generation> activeByWorkflow = [];
     private readonly Dictionary<Guid, Generation> generationByJob = [];
     private readonly Dictionary<Guid, List<Generation>> generationsByWorkflow = [];
+    private readonly Dictionary<Guid, TransferHandoff> terminalTransfers = [];
 
     public PersistenceHandoffTracker(ILogger<PersistenceHandoffTracker>? logger = null)
     {
@@ -150,6 +151,54 @@ internal sealed class PersistenceHandoffTracker : IPersistenceMutationObserver
         return completion.WaitAsync(cancellationToken);
     }
 
+    public void BeginTransferTerminal(Guid transferId, long revision)
+    {
+        lock (gate)
+        {
+            if (!terminalTransfers.TryGetValue(transferId, out TransferHandoff? handoff))
+            {
+                terminalTransfers.Add(transferId, new TransferHandoff(revision));
+                return;
+            }
+            handoff.RequiredRevision = Math.Max(handoff.RequiredRevision, revision);
+        }
+    }
+
+    public void FailTransferTerminalAdmission(Guid transferId, long revision)
+    {
+        lock (gate)
+        {
+            if (terminalTransfers.TryGetValue(transferId, out TransferHandoff? handoff)
+                && handoff.RequiredRevision <= revision)
+            {
+                handoff.Completion.TrySetException(new PersistenceHandoffException(
+                    $"Historical state for transfer {transferId:N} is unavailable because its terminal mutation was not admitted.",
+                    new InvalidOperationException("The persistence terminal queue rejected the transfer mutation.")));
+            }
+        }
+    }
+
+    public Task WaitForTransferAsync(
+        Guid transferId,
+        long revision,
+        CancellationToken cancellationToken)
+    {
+        Task completion;
+        lock (gate)
+        {
+            if (!terminalTransfers.TryGetValue(transferId, out TransferHandoff? handoff)
+                || handoff.RequiredRevision < revision)
+            {
+                return Task.CompletedTask;
+            }
+            handoff.WaiterAttached = true;
+            completion = handoff.Completion.Task;
+            if (completion.IsCompleted)
+                terminalTransfers.Remove(transferId);
+        }
+        return completion.WaitAsync(cancellationToken);
+    }
+
     public void Committed(IReadOnlyList<PersistenceMutation> mutations)
     {
         lock (gate)
@@ -157,19 +206,21 @@ internal sealed class PersistenceHandoffTracker : IPersistenceMutationObserver
             var touched = new HashSet<Generation>();
             foreach (var mutation in mutations)
             {
+                if (mutation is TransferTerminalPersistenceMutation transfer
+                    && terminalTransfers.TryGetValue(
+                        transfer.Transfer.TransferId,
+                        out TransferHandoff? transferHandoff)
+                    && transfer.Transfer.Revision >= transferHandoff.RequiredRevision)
+                {
+                    transferHandoff.Completion.TrySetResult();
+                    if (transferHandoff.WaiterAttached)
+                        terminalTransfers.Remove(transfer.Transfer.TransferId);
+                }
                 switch (mutation)
                 {
                     case JobPersistenceMutation job
                         when generationByJob.TryGetValue(job.JobId, out var generation):
                         SetMaximum(generation.CommittedJobRevisions, job.JobId, job.Revision);
-                        touched.Add(generation);
-                        break;
-                    case SearchTerminalPersistenceMutation search
-                        when generationByJob.TryGetValue(search.Completion.SearchJobId, out var generation):
-                        SetMaximum(
-                            generation.CommittedSearchRevisions,
-                            search.Completion.SearchJobId,
-                            search.Completion.Revision);
                         touched.Add(generation);
                         break;
                     case SearchCompletionPersistenceMutation search
@@ -197,6 +248,18 @@ internal sealed class PersistenceHandoffTracker : IPersistenceMutationObserver
             var affected = new HashSet<Generation>();
             foreach (PersistenceMutation mutation in mutations)
             {
+                if (mutation is TransferTerminalPersistenceMutation transfer
+                    && terminalTransfers.TryGetValue(
+                        transfer.Transfer.TransferId,
+                        out TransferHandoff? transferHandoff)
+                    && transfer.Transfer.Revision >= transferHandoff.RequiredRevision)
+                {
+                    transferHandoff.Completion.TrySetException(new PersistenceHandoffException(
+                        $"Historical state for transfer {transfer.Transfer.TransferId:N} is unavailable because its terminal mutation was permanently lost.",
+                        exception));
+                    if (transferHandoff.WaiterAttached)
+                        terminalTransfers.Remove(transfer.Transfer.TransferId);
+                }
                 switch (mutation)
                 {
                     case JobPersistenceMutation { Priority: PersistenceMutationPriority.Terminal } job
@@ -205,14 +268,6 @@ internal sealed class PersistenceHandoffTracker : IPersistenceMutationObserver
                             generation.FailedJobMutations,
                             job.JobId,
                             new FailedMutation(job.Revision, Describe(job), exception));
-                        affected.Add(generation);
-                        break;
-                    case SearchTerminalPersistenceMutation search
-                        when generationByJob.TryGetValue(search.Completion.SearchJobId, out var generation):
-                        SetLatestFailure(
-                            generation.FailedSearchMutations,
-                            search.Completion.SearchJobId,
-                            new FailedMutation(search.Completion.Revision, Describe(search), exception));
                         affected.Add(generation);
                         break;
                     case SearchCompletionPersistenceMutation search
@@ -344,6 +399,14 @@ internal sealed class PersistenceHandoffTracker : IPersistenceMutationObserver
     }
 
     private sealed record FailedMutation(long Revision, string Description, Exception Exception);
+
+    private sealed class TransferHandoff(long requiredRevision)
+    {
+        public long RequiredRevision { get; set; } = requiredRevision;
+        public TaskCompletionSource Completion { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool WaiterAttached { get; set; }
+    }
 }
 
 internal sealed class PersistenceHandoffException(string message, Exception innerException)

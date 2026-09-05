@@ -1,5 +1,6 @@
 using Sockseek.Api;
 using Sockseek.Core.UserProfiles;
+using Sockseek.Server.PeerRestrictions;
 
 namespace Sockseek.Server.UserProfiles;
 
@@ -13,7 +14,6 @@ internal static class UserProfileEndpoints
             .WithSummary("Gets a composite remote Soulseek user profile.")
             .Produces<UserProfileDto>()
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
-            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
             .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
 
         app.MapGet("/api/users/{username}/picture", GetPictureAsync)
@@ -33,6 +33,7 @@ internal static class UserProfileEndpoints
     private static async Task<IResult> GetProfileAsync(
         string username,
         EngineSupervisor supervisor,
+        PeerRestrictionCoordinator peerRestrictions,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken,
         bool refresh = false)
@@ -47,10 +48,16 @@ internal static class UserProfileEndpoints
         }
         try
         {
-            return Results.Ok(await service.GetAsync(
+            UserProfileDto profile = await service.GetAsync(
                 username,
                 refresh,
-                cancellationToken).ConfigureAwait(false));
+                cancellationToken).ConfigureAwait(false);
+            UserRestrictionsDto restrictions = peerRestrictions.Get(profile.Username);
+            return Results.Ok(profile with
+            {
+                UploadAccessBlocked = restrictions.UploadAccess.IsBlocked,
+                PrivateMessagesBlocked = restrictions.PrivateMessages.IsBlocked,
+            });
         }
         catch (Exception exception)
         {
@@ -112,8 +119,6 @@ internal static class UserProfileEndpoints
     private static IResult Failure(Exception exception)
         => exception switch
         {
-            UserProfileAccessDeniedException => Results.NotFound(
-                new ApiErrorDto("The Soulseek user was not found.", "user-not-found")),
             ArgumentException => Results.BadRequest(
                 new ApiErrorDto(exception.Message, "invalid-username")),
             UserProfileUnavailableException or InvalidOperationException => Unavailable(),
@@ -124,4 +129,5 @@ internal static class UserProfileEndpoints
         => Results.Json(
             new ApiErrorDto("Soulseek profiles are unavailable.", "soulseek-unavailable"),
             statusCode: StatusCodes.Status503ServiceUnavailable);
+
 }

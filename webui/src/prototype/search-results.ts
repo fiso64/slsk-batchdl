@@ -6,11 +6,7 @@ import type { AudioAttributes, ItemPeerInfo } from './items';
 import { basename } from './items';
 import { extension, isAudioFilePath } from './file-types';
 import type { PrototypeDataLifetime } from './state';
-import type {
-  ProposedGenericDirectoryRetrievalRequestDto,
-  ProposedPreferredResultDto,
-  ProposedSearchResultProjectionRequestDto,
-} from './contracts/search';
+import type { PeerDirectoryRefDto } from './contracts/search';
 import { prototypeUuid } from './ids';
 import {
   cloneSearchConditions,
@@ -31,11 +27,49 @@ export type SearchView = 'list' | 'results';
 export type SearchSort = 'relevance' | 'speed' | 'queue' | 'size' | 'count' | 'name';
 export type SizeSortDirection = 'asc' | 'desc';
 
+interface PrototypePreferredResult {
+  candidateKey: string;
+  tier: 'preferred' | 'other';
+  matchedPreferenceKeys: string[];
+}
+
+interface PrototypeSearchProjectionRequest {
+  filterText: string | null;
+  projection:
+    | { kind: 'generic-directory'; request: Record<string, never> }
+    | {
+        kind: 'track';
+        request: {
+          songQuery?: components['schemas']['SongQueryDto'] | null;
+          includeFullResults: boolean;
+        };
+      }
+    | {
+        kind: 'album';
+        request: { albumQuery?: components['schemas']['AlbumQueryDto'] | null };
+      };
+  search: components['schemas']['SearchSettingsPatchDto'];
+  order:
+    | 'relevance'
+    | 'upload-speed'
+    | 'queue-depth'
+    | 'item-size-ascending'
+    | 'item-size-descending'
+    | 'directory-size-ascending'
+    | 'directory-size-descending'
+    | 'file-count-ascending'
+    | 'file-count-descending'
+    | 'directory-name-ascending'
+    | 'directory-name-descending';
+  cursor: string | null;
+  limit: number;
+}
+
 export interface SearchResultProjectionPage {
   items: ProjectedSearchResult[];
   totalCount: number;
   nextCursor: string | null;
-  request: ProposedSearchResultProjectionRequestDto;
+  request: PrototypeSearchProjectionRequest;
 }
 
 export interface SearchRecord {
@@ -69,13 +103,12 @@ type StartFileDownloadsRequestDto = components['schemas']['StartFileDownloadsReq
 type StartFolderDownloadRequestDto = components['schemas']['StartFolderDownloadRequestDto'];
 type AlbumFolderRefDto = components['schemas']['AlbumFolderRefDto'];
 type AlbumQueryDto = components['schemas']['AlbumQueryDto'];
-type AggregateTrackProjectionRequestDto = components['schemas']['AggregateTrackProjectionRequestDto'];
-type AggregateAlbumProjectionRequestDto = components['schemas']['AggregateAlbumProjectionRequestDto'];
+type CreateSearchViewRequestDto = components['schemas']['CreateSearchViewRequestDto'];
 type RetrieveFolderRequestDto = components['schemas']['RetrieveFolderRequestDto'];
 
 export type AggregateSearchProjectionRequest =
-  | { kind: 'song-aggregate'; request: AggregateTrackProjectionRequestDto }
-  | { kind: 'album-aggregate'; request: AggregateAlbumProjectionRequestDto };
+  | { kind: 'song-aggregate'; request: CreateSearchViewRequestDto }
+  | { kind: 'album-aggregate'; request: CreateSearchViewRequestDto };
 
 /** Generic File Search must opt into General so selected files become RemoteFile jobs. */
 export function buildGenericFileDownloadRequest(
@@ -121,9 +154,9 @@ export function buildAlbumFolderRetrievalRequest(album: AlbumSearchResult, album
   return { folder: album.candidateRef, albumQuery: albumQuery ?? null };
 }
 
-/** Generic File Search needs the same core directory browse through a generalized public follow-up contract. */
-export function buildGenericDirectoryRetrievalRequest(directory: GenericDirectoryResult): ProposedGenericDirectoryRetrievalRequestDto {
-  return { directory: { username: directory.peer.username, directoryPath: directory.path } };
+/** Builds the canonical production peer-directory identity for a browse follow-up. */
+export function buildGenericDirectoryRetrievalRequest(directory: GenericDirectoryResult): PeerDirectoryRefDto {
+  return { ref: directory.id, username: directory.peer.username, folderPath: directory.path };
 }
 
 /**
@@ -150,7 +183,7 @@ export function retrieveAlbumFolderFixture(album: AlbumSearchResult): AlbumSearc
 export type PeerInfo = ItemPeerInfo & {
   uploadSpeedMbps: number;
   freeUploadSlot: boolean;
-  /** Proposed result-peer field; not in current PeerInfoDto. */
+  /** Search-time queue observation from the production peer DTO. */
   queueLength: number;
 };
 
@@ -160,11 +193,11 @@ export interface TrackSearchResult {
   candidateRef: FileCandidateRefDto;
   peer: PeerInfo;
   path: string;
-  /** Proposed per-result visibility until the daemon exposes it. */
+  /** Fixture shorthand for the production public/locked visibility enum. */
   locked: boolean;
   sizeBytes: number;
   audio?: AudioAttributes;
-  preference: ProposedPreferredResultDto;
+  preference: PrototypePreferredResult;
   preferred: boolean;
 }
 
@@ -186,7 +219,7 @@ export interface AlbumSearchResult {
   sizeBytes: number;
   files: AlbumFileResult[];
   preferred: boolean;
-  preference: ProposedPreferredResultDto;
+  preference: PrototypePreferredResult;
   retrievalState: 'idle' | 'retrieving' | 'retrieved' | 'failed';
   totalFileCount: number;
 }
@@ -208,7 +241,7 @@ export interface GenericDirectoryResult {
   totalFileCount: number;
   retrievalState: 'idle' | 'retrieving' | 'retrieved' | 'failed';
   preferred: boolean;
-  preference: ProposedPreferredResultDto;
+  preference: PrototypePreferredResult;
 }
 
 export type ProjectedSearchResult = TrackSearchResult | AlbumSearchResult | GenericDirectoryResult;
@@ -578,18 +611,17 @@ export const albumAggregateGroups: AlbumAggregateGroup[] = [
 
 export function buildAggregateSearchProjectionRequest(
   record: SearchRecord,
-  includeOptions = false,
 ): AggregateSearchProjectionRequest {
   if (record.submission.kind === 'song-aggregate') {
     return {
       kind: 'song-aggregate',
-      request: { songQuery: record.submission.request.songQuery, includeCandidates: includeOptions },
+      request: { kind: 'AggregateTracks', songQuery: record.submission.request.songQuery, includeFullResults: true },
     };
   }
   if (record.submission.kind === 'album-aggregate') {
     return {
       kind: 'album-aggregate',
-      request: { albumQuery: record.submission.request.albumQuery, includeFolders: includeOptions },
+      request: { kind: 'AggregateAlbums', albumQuery: record.submission.request.albumQuery, includeFullResults: false },
     };
   }
   throw new Error('Aggregate projection requested for a non-aggregate search view.');
@@ -599,7 +631,7 @@ export function aggregateGroupsForRecord(record: SearchRecord, filterText = ''):
   if (!isAggregateSearchMode(record.draft.resultMode)) return [];
   if ((record.status === 'pending' || record.status === 'searching') && record.foundFiles === 0) return [];
   // Aggregate modes are SearchJob projections, not AggregateJob/AlbumAggregateJob submissions.
-  const projection = buildAggregateSearchProjectionRequest(record, false);
+  const projection = buildAggregateSearchProjectionRequest(record);
   const source: AggregateSearchGroup[] = projection.kind === 'album-aggregate' ? albumAggregateGroups : songAggregateGroups;
   const query = filterText.trim().toLowerCase();
   const minShares = Math.max(1, Number(record.conditions.aggregate.minShares || 1));
@@ -818,7 +850,7 @@ function fileMatchesPatch(
 function matchesNecessaryProjection(
   record: SearchRecord,
   result: ProjectedSearchResult,
-  request: ProposedSearchResultProjectionRequestDto,
+  request: PrototypeSearchProjectionRequest,
 ): boolean {
   const query = request.filterText?.trim().toLowerCase();
   const haystack = result.kind === 'album'
@@ -851,7 +883,7 @@ function matchesNecessaryProjection(
     : true;
 }
 
-function hasRankingPatch(request: ProposedSearchResultProjectionRequestDto): boolean {
+function hasRankingPatch(request: PrototypeSearchProjectionRequest): boolean {
   const patch = request.search.preferredCond;
   return Boolean(patch && Object.values(patch).some((value) => value !== null && value !== undefined && value !== false));
 }
@@ -859,7 +891,7 @@ function hasRankingPatch(request: ProposedSearchResultProjectionRequestDto): boo
 function withProjectedPreference(
   record: SearchRecord,
   result: ProjectedSearchResult,
-  request: ProposedSearchResultProjectionRequestDto,
+  request: PrototypeSearchProjectionRequest,
 ): ProjectedSearchResult {
   if (result.kind === 'generic-directory') return result;
   if (!hasRankingPatch(request)) {
@@ -893,7 +925,7 @@ function withProjectedPreference(
 function projectGenericDirectory(
   record: SearchRecord,
   directory: GenericDirectoryResult,
-  request: ProposedSearchResultProjectionRequestDto,
+  request: PrototypeSearchProjectionRequest,
 ): GenericDirectoryResult | null {
   const filter = request.filterText?.trim().toLowerCase() ?? '';
   const directoryMatchesFilter = !filter || `${directory.peer.username} ${directory.path}`.toLowerCase().includes(filter);
@@ -930,7 +962,7 @@ function projectGenericDirectory(
 function compareGenericDirectories(
   a: GenericDirectoryResult,
   b: GenericDirectoryResult,
-  order: ProposedSearchResultProjectionRequestDto['order'],
+  order: PrototypeSearchProjectionRequest['order'],
 ): number {
   if (order === 'upload-speed') return b.peer.uploadSpeedMbps - a.peer.uploadSpeedMbps || a.path.localeCompare(b.path);
   if (order === 'directory-size-ascending') return a.sizeBytes - b.sizeBytes || a.path.localeCompare(b.path);
@@ -955,9 +987,9 @@ export function buildSearchResultProjectionRequest(
   sizeDirection: SizeSortDirection,
   cursor: string | null,
   limit: number,
-): ProposedSearchResultProjectionRequestDto {
+): PrototypeSearchProjectionRequest {
   const family = searchModeFamily(record.draft.resultMode);
-  let projection: ProposedSearchResultProjectionRequestDto['projection'];
+  let projection: PrototypeSearchProjectionRequest['projection'];
   if (record.submission.kind === 'generic') {
     projection = { kind: 'generic-directory', request: {} };
   } else if (record.submission.kind === 'track' || record.submission.kind === 'song-aggregate') {
@@ -976,12 +1008,11 @@ export function buildSearchResultProjectionRequest(
       kind: 'album',
       request: {
         albumQuery: record.submission.request.albumQuery,
-        includeFiles: true,
       },
     };
   }
 
-  let order: ProposedSearchResultProjectionRequestDto['order'] = 'relevance';
+  let order: PrototypeSearchProjectionRequest['order'] = 'relevance';
   if (sort === 'speed') order = 'upload-speed';
   else if (family === 'generic' && sort === 'size') order = `directory-size-${sizeDirection === 'asc' ? 'ascending' : 'descending'}`;
   else if (family === 'generic' && sort === 'count') order = `file-count-${sizeDirection === 'asc' ? 'ascending' : 'descending'}`;
@@ -1002,7 +1033,7 @@ export function buildSearchResultProjectionRequest(
 /** Mock daemon boundary: filter, conditions, ranking, and order precede paging. */
 export function requestSearchResultProjection(
   record: SearchRecord,
-  request: ProposedSearchResultProjectionRequestDto,
+  request: PrototypeSearchProjectionRequest,
 ): SearchResultProjectionPage {
   if ((record.status === 'pending' || record.status === 'searching') && record.foundFiles === 0) {
     return { items: [], totalCount: 0, nextCursor: null, request };

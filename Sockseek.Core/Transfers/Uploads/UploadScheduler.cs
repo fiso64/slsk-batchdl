@@ -351,6 +351,69 @@ public sealed class UploadScheduler
         }
     }
 
+    public UploadQueuePage GetNewestPage(
+        DateTimeOffset? beforeRequestedAtUtc,
+        Guid? beforeTransferId,
+        int limit,
+        string? username = null,
+        DateTimeOffset? fromUtc = null,
+        DateTimeOffset? toUtc = null)
+    {
+        if (limit is < 1 or > 500)
+            throw new ArgumentOutOfRangeException(nameof(limit), "Page limit must be between 1 and 500.");
+        if (beforeRequestedAtUtc.HasValue != beforeTransferId.HasValue)
+            throw new ArgumentException("Both timeline cursor fields must be supplied together.");
+        if (username is not null)
+            username = PeerUsername.Validate(username);
+
+        lock (sync)
+        {
+            var items = new List<UploadSchedulerEntrySnapshot>(limit);
+            AdmissionKey? last = null;
+            bool hasMore = false;
+            AdmissionKey? before = beforeRequestedAtUtc is { } time
+                && beforeTransferId is { } id
+                    ? new AdmissionKey(time, id)
+                    : null;
+
+            foreach (AdmissionKey key in waitingByAdmission.Reverse())
+            {
+                if (before is not null && CompareTimelineKey(key, before.Value) >= 0)
+                    continue;
+                Entry entry = entries[key.TransferId];
+                if (username is not null
+                    && !StringComparer.Ordinal.Equals(entry.Username, username))
+                    continue;
+                if (fromUtc is { } from && key.RequestedAtUtc < from)
+                    break;
+                if (toUtc is { } to && key.RequestedAtUtc > to)
+                    continue;
+
+                if (items.Count == limit)
+                {
+                    hasMore = true;
+                    break;
+                }
+                items.Add(Snapshot(entry));
+                last = key;
+            }
+
+            return new UploadQueuePage(
+                items,
+                hasMore ? last?.RequestedAtUtc : null,
+                hasMore ? last?.TransferId : null,
+                queueRevision,
+                QueueChanged: false);
+        }
+    }
+
+    private static int CompareTimelineKey(AdmissionKey left, AdmissionKey right)
+    {
+        int time = left.RequestedAtUtc.ToUnixTimeMilliseconds()
+            .CompareTo(right.RequestedAtUtc.ToUnixTimeMilliseconds());
+        return time != 0 ? time : left.TransferId.CompareTo(right.TransferId);
+    }
+
     private IReadOnlyList<UploadSchedulerGrant> TakeAvailableGrants()
     {
         if (active.Count >= slots || readyUsers.Count == 0)

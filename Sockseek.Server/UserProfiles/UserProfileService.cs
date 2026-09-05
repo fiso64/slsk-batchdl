@@ -10,8 +10,6 @@ using SoulseekPresence = Soulseek.UserPresence;
 
 namespace Sockseek.Server.UserProfiles;
 
-public sealed class UserProfileAccessDeniedException : Exception;
-
 public sealed class UserProfileUnavailableException(string message, Exception? inner = null)
     : InvalidOperationException(message, inner);
 
@@ -54,7 +52,6 @@ public sealed class UserProfileService : IAsyncDisposable
     private readonly IUserProfileTransport transport;
     private readonly Func<CancellationToken, Task> ensureSessionStarted;
     private readonly Func<string?> localAccountProvider;
-    private readonly PeerAccessPolicy accessPolicy;
     private readonly Func<DateTimeOffset> utcNow;
     private readonly TimeSpan sectionTimeout;
     private readonly ILogger<UserProfileService> logger;
@@ -74,7 +71,6 @@ public sealed class UserProfileService : IAsyncDisposable
         IUserProfileTransport transport,
         Func<CancellationToken, Task> ensureSessionStarted,
         Func<string?> localAccountProvider,
-        PeerAccessPolicy accessPolicy,
         ILogger<UserProfileService> logger,
         int networkConcurrency = DefaultNetworkConcurrency,
         Func<DateTimeOffset>? utcNow = null,
@@ -83,7 +79,6 @@ public sealed class UserProfileService : IAsyncDisposable
         this.transport = transport ?? throw new ArgumentNullException(nameof(transport));
         this.ensureSessionStarted = ensureSessionStarted ?? throw new ArgumentNullException(nameof(ensureSessionStarted));
         this.localAccountProvider = localAccountProvider ?? throw new ArgumentNullException(nameof(localAccountProvider));
-        this.accessPolicy = accessPolicy ?? throw new ArgumentNullException(nameof(accessPolicy));
         this.utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         this.sectionTimeout = sectionTimeout ?? SectionTimeout;
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -138,9 +133,6 @@ public sealed class UserProfileService : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref disposeState) != 0, this);
         username = PeerUsername.Validate(username);
-        if (accessPolicy.IsUsernameBlocked(username))
-            throw new UserProfileAccessDeniedException();
-
         string peerHash = LogIdentity.PeerHash(username);
 
         try
@@ -267,6 +259,8 @@ public sealed class UserProfileService : IAsyncDisposable
             DateTimeOffset observedAt = utcNow();
             var profile = new UserProfileDto(
                 key.Username,
+                false,
+                false,
                 Presence(status),
                 status.Section,
                 info.Section,

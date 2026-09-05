@@ -16,6 +16,7 @@ using Sockseek.Core.Diagnostics;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Planning;
 
 using Directory = System.IO.Directory;
 using File = System.IO.File;
@@ -36,128 +37,53 @@ internal sealed class DiscoveryCoordinator
     }
     public async Task<ExtractJobResult> ProcessExtractJob(ExtractJob job, Job? parentJob, CancellationToken parentToken)
     {
-        InputType inputType;
-        IExtractor extractor;
+        if (job.HasPlannedExtraction)
+        {
+            if (job.PlannedExtractionFailure is { } failure)
+            {
+                return new(
+                    DownloadOutcomes.ExtractionFailed(
+                        new InvalidOperationException(failure)),
+                    null,
+                    null);
+            }
+
+            Job planned = job.Result
+                ?? throw new InvalidOperationException(
+                    "A successfully planned extraction has no retained result.");
+            PublishExtractedResult(job, planned, parentJob);
+            return new(JobOutcome.Done(), planned, null);
+        }
+
+        JobExtractionPlanResult plan;
         try
         {
-            (inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(
-                job.Input,
-                job.InputType ?? InputType.None,
-                job.Config);
+            plan = await context.Runtime.WithExtractorSlot(job.Cts!.Token, async () =>
+            {
+                job.UpdateActivity(JobActivityPhase.Extracting);
+                job.Cts.Token.ThrowIfCancellationRequested();
+                return await JobExtractionPlanner.ExtractAsync(
+                    job,
+                    ExtractorContext.ForExtractJob(
+                        job,
+                        context.Events,
+                        ExtractorLogSource(job.InputType ?? InputType.None),
+                        context.SensitiveOutput),
+                    job.Cts.Token).ConfigureAwait(false);
+            });
+        }
+        catch (OperationCanceledException) when (jobs.IsJobCancellationRequested(job, parentToken))
+        {
+            return new(JobOutcome.Cancelled(jobs.CancellationSourceFor(job, parentToken)), null, null);
         }
         catch (Exception e)
         {
             return new(DownloadOutcomes.ExtractionFailed(e), null, null);
         }
 
-        job.InputType = inputType;
-        // Preserve the resolved extractor identity in the inherited settings so input-type
-        // auto profiles continue to match jobs produced by this extraction.
-        job.Config.Extraction.InputType = inputType;
-
-        Job extracted;
-        try
-        {
-            extracted = await context.Runtime.WithExtractorSlot(job.Cts!.Token, async () =>
-            {
-                job.UpdateActivity(JobActivityPhase.Extracting);
-                job.Cts.Token.ThrowIfCancellationRequested();
-                var extraction = EffectiveExtractionSettings(job);
-                var result = await extractor.GetTracks(
-                    job.Input,
-                    extraction,
-                    ExtractorContext.ForExtractJob(
-                        job,
-                        context.Events,
-                        ExtractorLogSource(inputType),
-                        context.SensitiveOutput));
-                job.Cts.Token.ThrowIfCancellationRequested();
-                return result;
-            });
-        }
-        catch (OperationCanceledException) when (jobs.IsJobCancellationRequested(job, parentToken))
-        {
-            return new(JobOutcome.Cancelled(jobs.CancellationSourceFor(job, parentToken)), null, extractor);
-        }
-        catch (Exception e)
-        {
-            return new(DownloadOutcomes.ExtractionFailed(e), null, extractor);
-        }
-
-        var effectiveExtraction = EffectiveExtractionSettings(job);
-        extracted = ApplyExtractedResultTransforms(job, extracted, effectiveExtraction.UpgradeToAlbum);
+        Job extracted = plan.Result;
         PublishExtractedResult(job, extracted, parentJob);
-        return new(JobOutcome.Done(), extracted, extractor);
-    }
-
-    static ExtractionSettings EffectiveExtractionSettings(ExtractJob job)
-    {
-        if (job.RequestedModeOverride == null)
-            return job.Config.Extraction;
-
-        var extraction = SettingsCloner.Clone(job.Config.Extraction);
-        extraction.RequestedMode = job.RequestedModeOverride;
-        return extraction;
-    }
-
-    Job ApplyExtractedResultTransforms(ExtractJob job, Job extracted, bool forceAlbumUpgrade)
-    {
-        job.Result = extracted;
-
-        if (extracted is IUpgradeable upgradeable)
-        {
-            var upgraded = upgradeable.Upgrade(forceAlbumUpgrade, job.Config.Search.IsAggregate).ToList();
-
-            if (upgraded.Count == 1)
-            {
-                job.Result = upgraded[0];
-                extracted = job.Result;
-            }
-            else
-            {
-                job.Result = new JobList(extracted.ItemName, upgraded);
-                extracted = job.Result;
-                extracted.CopySharedFieldsFrom(upgradeable as Job ?? extracted);
-            }
-        }
-
-        AssignWorkflowId(extracted, job.WorkflowId);
-        if (job.ResultDownloadBehaviorPolicy != null)
-            JobOrchestrator.ApplyDownloadBehaviorPolicy(extracted, job.ResultDownloadBehaviorPolicy);
-
-        // Propagate provenance from ExtractJob to the extracted result,
-        // but don't overwrite a LineNumber already set by the extractor (e.g. CSV parsing).
-        if (extracted.LineNumber == 0)
-            extracted.LineNumber = job.LineNumber;
-        extracted.ItemNumber = job.ItemNumber;
-        extracted.SourceMutation ??= job.SourceMutation;
-
-        if (job.EnablesIndexByDefault)
-            extracted.EnablesIndexByDefault = true;
-
-        // List/CSV row conditions are attached to the transient ExtractJob first.
-        // Carry them across so profile resolution on the extracted job cannot drop them.
-        // Merge rather than null-coalesce: the inner extractor may have created an
-        // empty or partial patch, while the outer row still carries real conditions.
-        extracted.ExtractorCond = FileConditionPatch.Merge(extracted.ExtractorCond, job.ExtractorCond);
-        extracted.ExtractorPrefCond = FileConditionPatch.Merge(extracted.ExtractorPrefCond, job.ExtractorPrefCond);
-        extracted.ExtractorFolderCond = FolderConditionPatch.Merge(extracted.ExtractorFolderCond, job.ExtractorFolderCond);
-        extracted.ExtractorPrefFolderCond = FolderConditionPatch.Merge(extracted.ExtractorPrefFolderCond, job.ExtractorPrefFolderCond);
-
-        // For a single-song JobList, also stamp the inner song (used by RemoveTrackFromSource),
-        // but only if it doesn't already have a LineNumber from extraction (e.g. CSV parsing).
-        if (extracted is JobList list && list.Jobs.Count == 1 && list.Jobs[0] is SongJob innerSong
-            && innerSong.LineNumber == 0)
-        {
-            innerSong.LineNumber = job.LineNumber;
-            innerSong.ItemNumber = job.ItemNumber;
-            innerSong.SourceMutation ??= job.SourceMutation;
-
-            if (job.EnablesIndexByDefault)
-                innerSong.EnablesIndexByDefault = true;
-        }
-
-        return extracted;
+        return new(JobOutcome.Done(), extracted, plan.Extractor);
     }
 
     void PublishExtractedResult(ExtractJob job, Job extracted, Job? parentJob)
@@ -312,7 +238,9 @@ internal sealed class DiscoveryCoordinator
             await context.ClientManager.WaitUntilReadyAsync(job.Cts!.Token);
             job.UpdateActivity(JobActivityPhase.RetrievingFolder);
             job.Result = await context.Runtime.Searcher.RetrieveDirectory(job.Directory, job.Cts!.Token);
-            job.NewFilesFoundCount = job.ResultObserver?.Invoke(job.Result) ?? job.Result.Files.Count;
+            job.NewFilesFoundCount = job.AsyncResultObserver != null
+                ? await job.AsyncResultObserver(job.Result, job.Cts.Token).ConfigureAwait(false)
+                : job.ResultObserver?.Invoke(job.Result) ?? job.Result.Files.Count;
             job.RetrievalOutcome = FolderRetrievalOutcome.Completed;
             job.Discovery = new DiscoverySummary { RawResultCount = job.NewFilesFoundCount, LockedFileCount = 0 };
             var outcome = JobOutcome.Done();

@@ -131,6 +131,85 @@ public class CliBackendParityTests
             });
     }
 
+    [TestMethod]
+    public async Task CliBackendParity_AllSearchProjectionKindsUseTheSameSemanticResults()
+    {
+        var projections = new ConcurrentBag<string[]>();
+        await RunForEachBackendAsync(
+            seedMusic: musicRoot =>
+            {
+                string albumDir = Path.Combine(musicRoot, "Artist", "Album");
+                Directory.CreateDirectory(albumDir);
+                File.WriteAllText(Path.Combine(albumDir, "01. Artist - Track One.mp3"), "a");
+                File.WriteAllText(Path.Combine(albumDir, "02. Artist - Track Two.mp3"), "bb");
+            },
+            scenario: async ctx =>
+            {
+                var options = new SubmissionOptionsDto(
+                    DownloadSettings: new DownloadSettingsPatchDto(
+                        Search: new SearchSettingsPatchDto(
+                            Relax: true,
+                            MinSharesAggregate: 1)));
+                JobSummaryDto search = await ctx.Backend.SubmitSearchJobAsync(
+                    new SubmitSearchJobRequestDto("Artist Album", options),
+                    ctx.Token);
+                await WaitForJobStateAsync(
+                    ctx.Backend,
+                    search.JobId,
+                    ExpectedJobStatus.Succeeded);
+
+                SearchResultSnapshotDto<FileCandidateDto> files = (await ctx.Backend
+                    .GetFileResultsAsync(
+                        search.JobId,
+                        new FileSearchProjectionRequestDto(
+                            new SongQueryDto(Artist: "Artist"),
+                            IncludeFullResults: true),
+                        ctx.Token))!;
+                SearchResultSnapshotDto<AlbumFolderDto> directories = (await ctx.Backend
+                    .GetFolderResultsAsync(
+                        search.JobId,
+                        new FolderSearchProjectionRequestDto(
+                            new AlbumQueryDto(Artist: "Artist", Album: "Album"),
+                            IncludeFiles: true),
+                        ctx.Token))!;
+                SearchResultSnapshotDto<AggregateTrackCandidateDto> tracks = (await ctx.Backend
+                    .GetAggregateTrackResultsAsync(
+                        search.JobId,
+                        new AggregateTrackProjectionRequestDto(
+                            new SongQueryDto(Artist: "Artist"),
+                            IncludeCandidates: true),
+                        ctx.Token))!;
+                SearchResultSnapshotDto<AggregateAlbumCandidateDto> albums = (await ctx.Backend
+                    .GetAggregateAlbumResultsAsync(
+                        search.JobId,
+                        new AggregateAlbumProjectionRequestDto(
+                            new AlbumQueryDto(Artist: "Artist", Album: "Album"),
+                            IncludeFolders: true),
+                        ctx.Token))!;
+
+                projections.Add(
+                [
+                    "files:" + string.Join('|', files.Items.Select(item =>
+                        $"{item.Username}:{item.Filename}:{item.PreferenceTier}")),
+                    "directories:" + string.Join('|', directories.Items.Select(item =>
+                        $"{item.Username}:{item.FolderPath}:{item.FileCount}:" +
+                        string.Join(',', item.Files?.Select(file => file.Filename) ?? []))),
+                    "tracks:" + string.Join('|', tracks.Items.Select(item =>
+                        $"{item.Query.Artist}:{item.Query.Title}:" +
+                        string.Join(',', item.Candidates?.Select(file => file.Filename) ?? []))),
+                    "albums:" + string.Join('|', albums.Items.Select(item =>
+                        $"{item.Query.Artist}:{item.Query.Album}:" +
+                        string.Join(',', item.Folders?.Select(folder => folder.FolderPath) ?? []))),
+                ]);
+            });
+
+        Assert.AreEqual(2, projections.Count);
+        string[][] rows = projections.ToArray();
+        CollectionAssert.AreEqual(rows[0], rows[1]);
+        Assert.IsTrue(rows[0].All(row => !row.EndsWith(':')),
+            "Every projection kind should produce a non-empty semantic result.");
+    }
+
     [TestCleanup]
     public void Cleanup()
     {
@@ -152,7 +231,7 @@ public class CliBackendParityTests
                 var summary = await ctx.Backend.SubmitAlbumJobAsync(
                     new SubmitAlbumJobRequestDto(
                         new AlbumQueryDto("Artist", "Album", "", "", false),
-                        DownloadBehavior: new DownloadBehaviorPolicyDto(Album: DownloadBehavior.Manual)),
+                        DownloadBehavior: new DownloadBehaviorPolicyDto(Album: ServerDownloadBehavior.Manual)),
                     ctx.Token);
 
                 await WaitForJobStateAsync(ctx.Backend, summary.JobId, ExpectedJobStatus.AwaitingSelection);
@@ -202,7 +281,7 @@ public class CliBackendParityTests
                 var summary = await ctx.Backend.SubmitAlbumAggregateJobAsync(
                     new SubmitAlbumAggregateJobRequestDto(
                         new AlbumQueryDto("Artist", "", "", "", false),
-                        DownloadBehavior: new DownloadBehaviorPolicyDto(AlbumAggregate: DownloadBehavior.Manual)),
+                        DownloadBehavior: new DownloadBehaviorPolicyDto(AlbumAggregate: ServerDownloadBehavior.Manual)),
                     ctx.Token);
 
                 await WaitForJobStateAsync(ctx.Backend, summary.JobId, ExpectedJobStatus.AwaitingSelection);
@@ -503,8 +582,8 @@ public class CliBackendParityTests
                 InputType: "List",
                 Options: new SubmissionOptionsDto(),
                 ResultDownloadBehavior: new DownloadBehaviorPolicyDto(
-                    Album: DownloadBehavior.Manual,
-                    AlbumAggregate: DownloadBehavior.Manual)),
+                    Album: ServerDownloadBehavior.Manual,
+                    AlbumAggregate: ServerDownloadBehavior.Manual)),
             ctx.Token);
 
     private static SubmissionOptionsJobSettingsResolver CreateLocalResolver(
@@ -666,7 +745,12 @@ public class CliBackendParityTests
             downloadSettings.Output.NameFormat = "{filename}";
             var app = ServerHost.Build([], new ServerOptions
             {
-                Engine = new EngineSettings { Username = "test_user", Password = "test_pass" },
+                Engine = new EngineSettings
+                {
+                    Username = "test_user",
+                    Password = "test_pass",
+                    LogLevel = LogLevel.None,
+                },
                 DefaultDownload = downloadSettings,
                 Profiles = ProfileCatalog.Empty,
                 ClientFactory = _ => client,
@@ -748,6 +832,7 @@ public class CliBackendParityTests
         {
             MockFilesDir = musicRoot,
             MockFilesReadTags = false,
+            LogLevel = LogLevel.None,
         };
 
     private static DownloadSettings CreateDownloadSettings(string outputDir)

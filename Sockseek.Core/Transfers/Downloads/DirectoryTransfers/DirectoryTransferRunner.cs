@@ -89,7 +89,8 @@ internal sealed class DirectoryTransferRunner
                     config.Output.ParentDir,
                     config.Transfer.MaxStaleTime,
                     ct: child.Cts.Token,
-                    parentJob: directory);
+                    parentJob: directory,
+                    allowOverwrite: !config.Skip.SkipExisting);
 
                 var outcome = transfer.Status switch
                 {
@@ -97,6 +98,8 @@ internal sealed class DirectoryTransferRunner
                         => JobOutcome.Done(transfer.Result.OutputPath),
                     ExactFileTransferStatus.ManuallySkipped
                         => JobOutcome.Skipped(JobSkipReason.Manual),
+                    ExactFileTransferStatus.AlreadyExists
+                        => JobOutcome.AlreadyExists(transfer.Result?.OutputPath),
                     _ => JobOutcome.Failed(JobFailureReason.Other, "The exact file transfer did not produce a result."),
                 };
                 JobOutcomeCommitter.Commit(child, outcome);

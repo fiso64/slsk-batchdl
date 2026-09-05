@@ -22,7 +22,7 @@
   import { groupAdjacentBy } from '../prototype/grouping';
   import type { ScenarioId } from '../mock/types';
   import type { PrototypeDownloadSelectionSummary, PrototypeMutationState } from '../prototype/state';
-  import type { ProposedJobHistoryArchiveRequestDto } from '../prototype/contracts/jobs';
+  import type { SubmissionArchiveCommand } from '../prototype/contracts/jobs';
   import { buildSubmissionOptions, createPrototypeDownloadOptions, downloadOptionsCustomized, type DownloadOptionCapabilities } from '../prototype/download-options';
   import type { SearchDraft } from '../prototype/search';
   import { isAggregateSearchMode, searchModeFamily, searchModeLabel } from '../prototype/search';
@@ -167,7 +167,11 @@
   }
 
   function removeSearch(id: string): void {
-    const request: ProposedJobHistoryArchiveRequestDto = { jobIds: [id], semantics: 'archive-from-history' };
+    const record = searches.find((item) => item.id === id);
+    const request: SubmissionArchiveCommand = {
+      submissionId: record?.workflowId ?? id,
+      request: { archived: true },
+    };
     void request;
     mutation = { phase: 'pending', label: 'Removing search history…' };
     searches = searches.filter((item) => item.id !== id);
@@ -219,9 +223,11 @@
 
   function removeAutomaticJob(job: AutomaticJobRecord): void {
     const target = presentationTarget(job, automaticJobs);
-    const isRoot = presentationParent(target, automaticJobs) === null;
-    const ids = isRoot ? new Set(automaticJobs.filter((candidate) => candidate.workflowId === target.workflowId).map((candidate) => candidate.id)) : automaticSubtreeIds(target);
-    const request: ProposedJobHistoryArchiveRequestDto = { jobIds: [...ids], semantics: 'archive-from-history' };
+    const ids = new Set(automaticJobs.filter((candidate) => candidate.workflowId === target.workflowId).map((candidate) => candidate.id));
+    const request: SubmissionArchiveCommand = {
+      submissionId: target.workflowId,
+      request: { archived: true },
+    };
     void request;
     mutation = { phase: 'pending', label: `Removing ${target.title}…` };
     automaticJobs = automaticJobs.filter((candidate) => !ids.has(candidate.id));

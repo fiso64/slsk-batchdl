@@ -7,7 +7,7 @@
   import type { PrototypeScenario } from '../mock/types';
   import type { UserLinkActions } from '../prototype/navigation';
   import type { PrototypeMutationState } from '../prototype/state';
-  import type { ProposedBulkActionRequestDto, ProposedTransferHistoryArchiveRequestDto } from '../prototype/contracts/transfers';
+  import type { ArchiveTransfersRequestDto, BulkCancelTransfersRequestDto, TransferArchiveCommand } from '../prototype/contracts/transfers';
   import type { FolderItemFile, TransferPresentation } from '../prototype/items';
   import { resourceStateForScenario } from '../prototype/resource-state';
   import { uploadsForScenario, type UploadEntry, type UploadFolderEntry } from '../prototype/uploads';
@@ -63,11 +63,11 @@
     mutation = { phase: 'pending', label: 'Removing upload history…' };
     if (item.kind === 'file') {
       if (!isTerminalTransfer(item.transfer)) return;
-      const request: ProposedTransferHistoryArchiveRequestDto = { direction: 'upload', transferIds: item.sourceTransferIds, semantics: 'archive-from-history' }; void request;
+      const requests: TransferArchiveCommand[] = item.sourceTransferIds.map((transferId) => ({ transferId, request: { archived: true } })); void requests;
       removeTransfer(item.id);
     } else {
       if (!isTerminalTransfer(item.transfer)) return;
-      const request: ProposedTransferHistoryArchiveRequestDto = { direction: 'upload', transferIds: item.sourceTransferIds, semantics: 'archive-from-history' }; void request;
+      const requests: TransferArchiveCommand[] = item.sourceTransferIds.map((transferId) => ({ transferId, request: { archived: true } })); void requests;
       const next = new Set(removedTransfers); for (const file of item.files) next.add(file.id); removedTransfers = next;
     }
     mutation = { phase: 'succeeded', label: 'Removed from history' };
@@ -82,12 +82,15 @@
   function removeFolderFile(entry: TransferTimelineFolderEntry, file: FolderItemFile): void {
     const folder = entry as UploadFolderEntry;
     if (!folder.files.some((candidate) => candidate.id === file.id) || !isTerminalTransfer(file.transfer)) return;
-    const request: ProposedTransferHistoryArchiveRequestDto = { direction: 'upload', transferIds: [file.id], semantics: 'archive-from-history' }; void request;
+    const request: TransferArchiveCommand = { transferId: file.id, request: { archived: true } }; void request;
     mutation = { phase: 'pending', label: 'Removing upload history…' }; removeTransfer(file.id); mutation = { phase: 'succeeded', label: 'Removed from history' };
   }
 
   function cancelBulk(): void {
-    const request: ProposedBulkActionRequestDto = { direction: 'upload', scope: 'current-view', action: 'cancel', filter: bulkCancelMode === 'active' ? 'in-progress' : bulkCancelMode };
+    const request: BulkCancelTransfersRequestDto = {
+      direction: 'Upload',
+      scope: bulkCancelMode === 'active' ? 'InProgress' : bulkCancelMode === 'queued' ? 'Queued' : 'All',
+    };
     void request;
     const next = new Set(cancelledTransfers); let requested = 0;
     for (const group of groups) for (const item of group.items) {
@@ -100,7 +103,7 @@
   }
 
   function removeCompleted(): void {
-    const request: ProposedBulkActionRequestDto = { direction: 'upload', scope: 'current-view', action: 'archive-terminal', filter: 'terminal' }; void request;
+    const request: ArchiveTransfersRequestDto = { archived: true, direction: 'upload' }; void request;
     const next = new Set(removedTransfers); let requested = 0;
     for (const group of groups) for (const item of group.items) {
       if (item.kind === 'file') { if (isTerminalTransfer(item.transfer)) { next.add(item.id); requested += 1; } }

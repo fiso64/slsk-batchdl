@@ -10,6 +10,8 @@ using System.Diagnostics;
 using Sockseek.Api;
 using Sockseek.Core.Transfers.Uploads;
 using Sockseek.Persistence.Chat;
+using Sockseek.Persistence.PeerRestrictions;
+using Sockseek.Persistence.Planning;
 
 namespace Sockseek.Server.Persistence;
 
@@ -42,9 +44,14 @@ public sealed class PersistenceCoordinator(
     public IPersistenceMutationSink? MutationSink => host?.MutationSink;
     public PersistenceQueueSnapshot Queue => host?.Queue ?? new(0, 0, 0, 0, 0);
     public IJobHistoryReader? JobHistory => host?.JobHistory;
+    public ISubmissionStore? Submissions => host?.Submissions;
     public ISearchHistoryReader? SearchHistory => host?.SearchHistory;
     public ITransferHistoryReader? TransferHistory => host?.TransferHistory;
+    public ITransferAnalyticsReader? TransferAnalytics => host?.TransferAnalytics;
     public ChatPersistenceStore? Chat => host?.Chat;
+    public PeerRestrictionOverrideStore? PeerRestrictions => host?.PeerRestrictions;
+    public InputArtifactStore? InputArtifacts => host?.InputArtifacts;
+    public SearchViewStore? SearchViews => host?.SearchViews;
     public long? DatabaseSizeBytes => host?.DatabaseSizeBytes;
     public long? WalSizeBytes => host?.WalSizeBytes;
     public DateTimeOffset? LastRetentionAtUtc { get; private set; }
@@ -86,6 +93,7 @@ public sealed class PersistenceCoordinator(
             SearchResultCapacityPerSearch = options.Persistence.SearchResultCapacityPerSearch,
             SearchResultGlobalCapacity = options.Persistence.SearchResultGlobalCapacity,
             IncompleteSearchTrackingCapacity = options.Persistence.IncompleteSearchTrackingCapacity,
+            SearchMutationQueueCapacity = options.Persistence.SearchMutationQueueCapacity,
             SearchResultFlushCount = options.Persistence.SearchResultFlushCount,
             SearchResultFlushInterval = options.Persistence.SearchResultFlushInterval,
             TransferProgressFlushInterval = options.Persistence.TransferProgressFlushInterval,
@@ -219,7 +227,8 @@ public sealed class PersistenceCoordinator(
                 throw new InvalidOperationException("An upload runtime is already attached.");
             uploadAdapter = new UploadPersistenceAdapter(
                 Runtime.RuntimeId,
-                host.MutationSink);
+                host.MutationSink,
+                handoffs);
             uploadAdapter.Attach(uploads);
         }
     }
@@ -266,5 +275,11 @@ public sealed class PersistenceCoordinator(
 
     internal Task WaitForAllHandoffsAsync(CancellationToken cancellationToken)
         => handoffs.WaitForAllAsync(cancellationToken);
+
+    internal Task WaitForTransferHandoffAsync(
+        Guid transferId,
+        long revision,
+        CancellationToken cancellationToken)
+        => handoffs.WaitForTransferAsync(transferId, revision, cancellationToken);
 
 }

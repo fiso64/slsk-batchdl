@@ -571,7 +571,7 @@ public sealed class DaemonClientStore
 
     private void ApplyChatTarget(ChatTargetDeltaDto delta)
     {
-        StateStreamScopeDto scope = delta.Kind == Sockseek.Core.Chat.ChatTargetKind.Direct
+        StateStreamScopeDto scope = delta.Kind == ServerChatTargetKind.Direct
             ? StateStreamScopeDto.ChatConversation(delta.TargetId)
             : StateStreamScopeDto.ChatRoom(delta.TargetId);
         if (!liveChatTargets.TryGetValue(scope, out ChatTargetSnapshotDto? current))
@@ -581,10 +581,10 @@ public sealed class DaemonClientStore
             : current.Messages.ToDictionary(message => message.MessageId);
         foreach (ChatMessageDto message in delta.Messages ?? [])
             messages[message.MessageId] = message;
-        bool truncated = messages.Count > Sockseek.Core.Chat.ChatLimits.LiveMessageTailSize;
+        bool truncated = messages.Count > ChatProtocol.LiveMessageTailSize;
         var tail = messages.Values
             .OrderByDescending(message => message.Sequence)
-            .Take(Sockseek.Core.Chat.ChatLimits.LiveMessageTailSize)
+            .Take(ChatProtocol.LiveMessageTailSize)
             .OrderBy(message => message.Sequence)
             .ToArray();
         liveChatTargets[scope] = current with
@@ -640,8 +640,8 @@ public sealed class DaemonClientStore
         if (snapshot.Scope.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom)
         {
             var expectedKind = snapshot.Scope.Kind == StateStreamScopeKind.ChatConversation
-                ? Sockseek.Core.Chat.ChatTargetKind.Direct
-                : Sockseek.Core.Chat.ChatTargetKind.Room;
+                ? ServerChatTargetKind.Direct
+                : ServerChatTargetKind.Room;
             if (snapshot.Daemon != null
                 || snapshot.UserBrowse != null
                 || snapshot.Workflows.Count != 0
@@ -651,15 +651,15 @@ public sealed class DaemonClientStore
                 || snapshot.ChatTarget is not { } target
                 || target.TargetId != snapshot.Scope.ChatTargetId
                 || target.Kind != expectedKind
-                || expectedKind == Sockseek.Core.Chat.ChatTargetKind.Direct
+                || expectedKind == ServerChatTargetKind.Direct
                     && (target.Conversation is null || target.Room is not null)
-                || expectedKind == Sockseek.Core.Chat.ChatTargetKind.Room
+                || expectedKind == ServerChatTargetKind.Room
                     && (target.Room is null || target.Conversation is not null)
                 || target.Conversation is { } conversation
-                    && (expectedKind != Sockseek.Core.Chat.ChatTargetKind.Direct
+                    && (expectedKind != ServerChatTargetKind.Direct
                         || conversation.ConversationId != target.TargetId)
                 || target.Room is { } room
-                    && (expectedKind != Sockseek.Core.Chat.ChatTargetKind.Room
+                    && (expectedKind != ServerChatTargetKind.Room
                         || room.RoomId != target.TargetId)
                 || target.Messages.Any(message =>
                     message.TargetId != target.TargetId || message.TargetKind != expectedKind))
@@ -698,16 +698,16 @@ public sealed class DaemonClientStore
         if (chatScope)
         {
             var expectedKind = batch.Scope.Kind == StateStreamScopeKind.ChatConversation
-                ? Sockseek.Core.Chat.ChatTargetKind.Direct
-                : Sockseek.Core.Chat.ChatTargetKind.Room;
+                ? ServerChatTargetKind.Direct
+                : ServerChatTargetKind.Room;
             if ((batch.State.ChatTargets ?? []).Any(target =>
                     target.TargetId != batch.Scope.ChatTargetId
                     || target.Kind != expectedKind
                     || target.Conversation is { } conversation
-                        && (expectedKind != Sockseek.Core.Chat.ChatTargetKind.Direct
+                        && (expectedKind != ServerChatTargetKind.Direct
                             || conversation.ConversationId != target.TargetId)
                     || target.Room is { } room
-                        && (expectedKind != Sockseek.Core.Chat.ChatTargetKind.Room
+                        && (expectedKind != ServerChatTargetKind.Room
                             || room.RoomId != target.TargetId)
                     || (target.Messages ?? []).Any(message =>
                         message.TargetId != target.TargetId || message.TargetKind != expectedKind)))

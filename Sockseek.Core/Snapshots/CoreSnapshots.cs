@@ -1,5 +1,8 @@
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.Planning;
+using Sockseek.Core.Services;
+using Sockseek.Core.Events;
 
 namespace Sockseek.Core.Snapshots;
 
@@ -18,7 +21,10 @@ public enum JobSnapshotKind
     RemoteDirectory,
 }
 
-public sealed record DiscoverySnapshot(int RawResultCount, int LockedFileCount);
+public sealed record DiscoverySnapshot(
+    int RawResultCount,
+    int LockedFileCount,
+    int ObservedPeerCount = 0);
 
 public sealed record SongQuerySnapshot(
     string? Artist,
@@ -67,7 +73,12 @@ public sealed record DirectoryTransferPlanSnapshot(
     IReadOnlyList<DirectoryTransferEntrySnapshot> Entries,
     long TotalKnownBytes);
 
-public sealed record PeerSnapshot(string Username, bool? HasFreeUploadSlot, int? UploadSpeed);
+public sealed record PeerSnapshot(
+    string Username,
+    bool? HasFreeUploadSlot,
+    int? UploadSpeed,
+    int? QueueLength = null,
+    DateTimeOffset? ObservedAtUtc = null);
 
 public sealed record SearchResultSnapshot(
     long Sequence,
@@ -84,7 +95,9 @@ public sealed record SearchResultSnapshot(
     int? UploadSpeed,
     bool? HasFreeUploadSlot,
     IReadOnlyList<FileAttributeSnapshot>? Attributes,
-    DateTimeOffset ObservedAtUtc);
+    DateTimeOffset ObservedAtUtc,
+    int? QueueLength = null,
+    SearchResultVisibility Visibility = SearchResultVisibility.Public);
 
 public sealed record FileCandidateSnapshot(
     string Username,
@@ -96,7 +109,8 @@ public sealed record FileCandidateSnapshot(
     int? SampleRate,
     int? Length,
     string Extension,
-    IReadOnlyList<FileAttributeSnapshot>? Attributes);
+    IReadOnlyList<FileAttributeSnapshot>? Attributes,
+    SearchResultVisibility Visibility = SearchResultVisibility.Public);
 
 public sealed record AlbumFileSnapshot(SongQuerySnapshot Query, FileCandidateSnapshot Candidate)
 {
@@ -124,6 +138,30 @@ public enum TransferSnapshotSource
     Fallback,
 }
 
+public enum TransferSnapshotTerminalOutcome
+{
+    None,
+    Succeeded,
+    Cancelled,
+    Failed,
+    Interrupted,
+}
+
+/// <summary>
+/// Reusable presentation-safe metadata for a transfer's exact file. Transfer
+/// identity remains in the surrounding snapshot; fallback or genuinely
+/// unknown files leave this value null.
+/// </summary>
+public sealed record TransferFileMetadataSnapshot(
+    string Name,
+    long Size,
+    string? Extension,
+    int? BitRate,
+    int? BitDepth,
+    int? SampleRate,
+    int? Length,
+    IReadOnlyList<FileAttributeSnapshot>? Attributes = null);
+
 public sealed record TransferSnapshot(
     Guid Id,
     TransferSnapshotDirection Direction,
@@ -140,7 +178,15 @@ public sealed record TransferSnapshot(
     long TotalBytes,
     int AttemptCount,
     FileCandidateSnapshot? Candidate,
-    PeerFileTargetSnapshot? Target = null);
+    PeerFileTargetSnapshot? Target = null,
+    DateTimeOffset? RequestedAtUtc = null,
+    DateTimeOffset? StartedAtUtc = null,
+    DateTimeOffset? LastProgressAtUtc = null,
+    long? BytesPerSecond = null,
+    TransferSnapshotTerminalOutcome TerminalOutcome = TransferSnapshotTerminalOutcome.None,
+    TransferFailureReason? FailureReason = null,
+    TransferCancellationReason? CancellationReason = null,
+    TransferFileMetadataSnapshot? File = null);
 
 public sealed record FileSearchProjectionSnapshot(SongQuerySnapshot Query, bool IncludeFullResults);
 
@@ -176,7 +222,8 @@ public sealed record SearchJobSnapshotPayload(
     FolderSearchProjectionSnapshot? DefaultFolderProjection,
     int ResultCount,
     int Revision,
-    bool IsComplete) : JobSnapshotPayload;
+    bool IsComplete,
+    SearchDefinition? Definition) : JobSnapshotPayload;
 
 public sealed record SongJobSnapshotPayload(
     SongQuerySnapshot Query,
@@ -184,14 +231,16 @@ public sealed record SongJobSnapshotPayload(
     FileCandidateSnapshot? ResolvedTarget,
     PeerFileTargetSnapshot? ExactTarget,
     SongDownloadSource DownloadSource,
-    FileDownloadStateSnapshot File) : JobSnapshotPayload;
+    FileDownloadStateSnapshot File,
+    SearchDefinition? Definition) : JobSnapshotPayload;
 
 public sealed record AlbumJobSnapshotPayload(
     AlbumQuerySnapshot Query,
     int ResultCount,
     AlbumFolderSnapshot? ResolvedTarget,
     IReadOnlyList<JobSnapshot> TrackJobs,
-    DirectoryDownloadStateSnapshot Directory) : JobSnapshotPayload;
+    DirectoryDownloadStateSnapshot Directory,
+    SearchDefinition? Definition) : JobSnapshotPayload;
 
 public sealed record RemoteFileJobSnapshotPayload(
     PeerFileTargetSnapshot Target,
@@ -215,11 +264,13 @@ public sealed record RemoteDirectoryJobSnapshotPayload(
 
 public sealed record AggregateJobSnapshotPayload(
     SongQuerySnapshot Query,
-    IReadOnlyList<JobSnapshot> Songs) : JobSnapshotPayload;
+    IReadOnlyList<JobSnapshot> Songs,
+    SearchDefinition? Definition) : JobSnapshotPayload;
 
 public sealed record AlbumAggregateJobSnapshotPayload(
     AlbumQuerySnapshot Query,
-    int AlbumCount) : JobSnapshotPayload;
+    int AlbumCount,
+    SearchDefinition? Definition) : JobSnapshotPayload;
 
 public sealed record JobListSnapshotPayload(
     int Count,
@@ -238,6 +289,13 @@ public sealed record JobSnapshot(
     Guid Id,
     int DisplayId,
     Guid WorkflowId,
+    Guid? SubmissionId,
+    JobSemanticRole SemanticRole,
+    DateTimeOffset? CreatedAtUtc,
+    string? SubmissionSpecificationJson,
+    Guid? RerunOfSubmissionId,
+    Guid? PreviewId,
+    string? ArtifactId,
     JobSnapshotKind Kind,
     long Revision,
     JobLifecycleState LifecycleState,

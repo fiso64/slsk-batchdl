@@ -300,7 +300,8 @@ public sealed record SearchCompletedChange(
     int Revision,
     string QueryText,
     int ResultCount,
-    int LockedFileCount)
+    int LockedFileCount,
+    int ObservedPeerCount = 0)
     : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record TrackBatchResolvedChange(

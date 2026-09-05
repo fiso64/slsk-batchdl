@@ -183,6 +183,10 @@ public class EngineStateStoreTests
         {
             Id = Guid.NewGuid(),
             AttemptCount = 1,
+            RequestedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-2),
+            StartedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-1),
+            LastProgressAtUtc = DateTimeOffset.UtcNow,
+            BytesPerSecond = 42,
         };
         Guid attemptId = Guid.NewGuid();
         DateTimeOffset startedAt = DateTimeOffset.UtcNow.AddSeconds(-1);
@@ -202,6 +206,13 @@ public class EngineStateStoreTests
         var started = store.GetLiveTransferDetail(transfer.Id);
         Assert.IsNotNull(started);
         Assert.AreEqual(1, started.Transfer.Status.AttemptCount);
+        Assert.AreEqual(42L, started.Transfer.Progress.BytesPerSecond);
+        Assert.AreEqual(transfer.RequestedAtUtc, started.Transfer.Scheduling?.RequestedAtUtc);
+        Assert.AreEqual(transfer.StartedAtUtc, started.Transfer.Scheduling?.StartedAtUtc);
+        Assert.AreEqual("Track.mp3", started.Transfer.File?.Name);
+        Assert.AreEqual(100L, started.Transfer.File?.Size);
+        Assert.IsTrue(started.Transfer.Status.AvailableActions.Any(action =>
+            action.Kind == ServerResourceActionKind.Cancel));
         Assert.AreEqual("Started", started.LatestAttempt?.State);
         Assert.AreEqual(startedAt, started.LatestAttempt?.StartedAtUtc);
 
@@ -249,6 +260,72 @@ public class EngineStateStoreTests
         Assert.AreEqual(uploadAttemptId, upload.LatestAttempt?.AttemptId);
         Assert.AreEqual("Started", upload.LatestAttempt?.State);
         Assert.AreEqual("upload-peer", upload.LatestAttempt?.SourceUsername);
+        Assert.IsNull(upload.Transfer.File, "Genuinely unknown upload metadata remains null.");
+    }
+
+    [TestMethod]
+    public void DaemonSnapshot_IncludesPreexistingActiveUploadAndDoesNotDuplicateItsDelta()
+    {
+        var store = new EngineStateStore();
+        Guid transferId = Guid.NewGuid();
+        Guid attemptId = Guid.NewGuid();
+        DateTimeOffset started = DateTimeOffset.UnixEpoch.AddHours(1);
+        var upload = new Sockseek.Core.Transfers.Uploads.UploadTransferSnapshot(
+            transferId,
+            Revision: 2,
+            Username: "peer",
+            RemotePath: @"Share\Track.flac",
+            SizeBytes: 100,
+            RequestedAtUtc: started.AddSeconds(-1),
+            State: Sockseek.Core.Transfers.Uploads.UploadTransferState.InProgress,
+            FailureReason: Sockseek.Core.Transfers.Uploads.UploadFailureReason.None,
+            CancellationSource: Sockseek.Core.Transfers.Uploads.UploadCancellationSource.None,
+            BytesTransferred: 25,
+            BytesPerSecond: 10,
+            LastProgressAtUtc: started,
+            Attempt: new Sockseek.Core.Transfers.Uploads.UploadAttemptSnapshot(
+                attemptId, 1, started, null, 25, 10),
+            FinishedAtUtc: null);
+        var batches = new List<StateUpdateBatchDto>();
+        store.StateBatchPublished += batches.Add;
+
+        store.UpdateUploadTransfer(upload);
+        int afterFirstUpdate = batches.Count;
+        store.UpdateUploadTransfer(upload);
+
+        Assert.AreEqual(afterFirstUpdate, batches.Count, "An identical hydration must not emit a duplicate delta.");
+        Assert.AreEqual(transferId, store.GetDaemonSnapshot().Transfers.Single().TransferId);
+
+        store.RemoveTerminalTransfer(transferId);
+        Assert.AreEqual(0, store.GetDaemonSnapshot().Transfers.Count);
+        Assert.IsTrue(batches.Last().State.RemovedTransferIds.Contains(transferId));
+    }
+
+    [TestMethod]
+    public void TerminalDownload_RemainsLiveUntilPersistenceOwnerExplicitlyRetiresIt()
+    {
+        var store = new EngineStateStore();
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+        Guid transferId = Guid.NewGuid();
+        var terminal = Transfer(song, (TransferStates)0) with
+        {
+            Id = transferId,
+            State = "Completed",
+            TerminalOutcome = TransferSnapshotTerminalOutcome.Succeeded,
+        };
+        var batches = new List<StateUpdateBatchDto>();
+        store.StateBatchPublished += batches.Add;
+
+        typeof(EngineStateStore)
+            .GetMethod("OnTerminalTransfer", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(store, [terminal, DateTimeOffset.UtcNow]);
+
+        Assert.IsNotNull(store.GetLiveTransfer(transferId));
+        Assert.IsFalse(batches.Last().State.RemovedTransferIds.Contains(transferId));
+
+        store.RemoveTerminalTransfer(transferId);
+        Assert.IsNull(store.GetLiveTransfer(transferId));
+        Assert.IsTrue(batches.Last().State.RemovedTransferIds.Contains(transferId));
     }
 
     [TestMethod]

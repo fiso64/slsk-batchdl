@@ -1,3 +1,5 @@
+using Sockseek.Core.Snapshots;
+
 namespace Sockseek.Persistence.Write;
 
 public enum PersistenceMutationPriority
@@ -45,7 +47,15 @@ public sealed record JobPersistenceMutation(
     string? ItemName,
     string? QueryText,
     int PayloadSchemaVersion,
-    string? PayloadJson)
+    string? PayloadJson,
+    Guid? SubmissionId = null,
+    string SemanticRole = "Legacy",
+    DateTimeOffset? RegisteredAtUtc = null,
+    string? SubmissionSpecificationJson = null,
+    Guid? RerunOfSubmissionId = null,
+    Guid? PreviewId = null,
+    string? ArtifactId = null,
+    DateTimeOffset? StartedAtUtc = null)
     : PersistenceMutation(RuntimeId, Sequence, OccurredAtUtc, JobId, Revision, Priority);
 
 public sealed record TransferPersistenceMutation(
@@ -69,8 +79,27 @@ public sealed record TransferPersistenceMutation(
     int AttemptCount,
     string FailureReason,
     string? FailureMessage,
-    string CancellationSource = "None")
+    string CancellationSource = "None",
+    DateTimeOffset? RequestedAtUtc = null,
+    DateTimeOffset? StartedAtUtc = null,
+    DateTimeOffset? LastProgressAtUtc = null,
+    long? BytesPerSecond = null,
+    TransferFileMetadataSnapshot? File = null,
+    string? GroupRef = null,
+    string? GroupDisplayPath = null,
+    IReadOnlyList<TransferAccountingObservation>? AccountingObservations = null)
     : PersistenceMutation(RuntimeId, Sequence, OccurredAtUtc, TransferId, Revision, Priority);
+
+/// <summary>
+/// One cumulative transport-byte observation for an attempt. Revision is the
+/// owning transfer revision, which makes replay idempotent independently of the
+/// transfer/attempt history projection revisions.
+/// </summary>
+public sealed record TransferAccountingObservation(
+    Guid AttemptId,
+    long Revision,
+    DateTimeOffset OccurredAtUtc,
+    long CumulativeBytes);
 
 public sealed record TransferAttemptPersistenceMutation(
     Guid RuntimeId,
@@ -87,7 +116,12 @@ public sealed record TransferAttemptPersistenceMutation(
     string? SourcePath,
     string? OutputPath,
     string FailureReason,
-    string? FailureMessage)
+    string? FailureMessage,
+    string Direction = "Download",
+    string? GroupRef = null,
+    string? GroupDisplayPath = null,
+    IReadOnlyList<TransferAccountingObservation>? AccountingObservations = null,
+    DateTimeOffset? StartedAtUtc = null)
     : PersistenceMutation(RuntimeId, Sequence, OccurredAtUtc, AttemptId, Revision, Priority);
 
 public sealed record SearchResultPersistenceRecord(
@@ -106,7 +140,9 @@ public sealed record SearchResultPersistenceRecord(
     int? UploadSpeed,
     bool? HasFreeUploadSlot,
     string? AttributesJson,
-    DateTimeOffset ObservedAtUtc);
+    DateTimeOffset ObservedAtUtc,
+    int? QueueLength = null,
+    string Visibility = "Public");
 
 public sealed record SearchResultsPersistenceMutation(
     Guid RuntimeId,
@@ -129,7 +165,8 @@ public sealed record SearchCompletionPersistenceMutation(
     string Query,
     long ResultCount,
     long LockedFileCount,
-    string ResultPersistenceState)
+    string ResultPersistenceState,
+    long ObservedPeerCount = 0)
     : PersistenceMutation(RuntimeId, Sequence, OccurredAtUtc, SearchJobId, Revision, PersistenceMutationPriority.Terminal);
 
 public sealed record SearchIncompletePersistenceMutation(
@@ -140,17 +177,6 @@ public sealed record SearchIncompletePersistenceMutation(
     long Revision,
     string Reason)
     : PersistenceMutation(RuntimeId, Sequence, OccurredAtUtc, SearchJobId, Revision, PersistenceMutationPriority.Terminal);
-
-public sealed record SearchTerminalPersistenceMutation(
-    SearchCompletionPersistenceMutation Completion,
-    IReadOnlyList<SearchResultsPersistenceMutation> PendingResultBatches)
-    : PersistenceMutation(
-        Completion.RuntimeId,
-        Completion.Sequence,
-        Completion.OccurredAtUtc,
-        Completion.SearchJobId,
-        Completion.Revision,
-        PersistenceMutationPriority.Terminal);
 
 public sealed record TransferTerminalPersistenceMutation(
     TransferPersistenceMutation Transfer,

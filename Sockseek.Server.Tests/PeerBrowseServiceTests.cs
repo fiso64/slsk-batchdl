@@ -192,25 +192,21 @@ public sealed class PeerBrowseServiceTests
     }
 
     [TestMethod]
-    public async Task LearnedArtifactId_IsRecheckedAgainstCurrentPeerPolicy()
+    public async Task LearnedArtifactRemainsAvailableWithoutCouplingOutboundBrowseToRestrictions()
     {
         await using var fixture = await Fixture.CreateAsync();
         PeerBrowseResource completed = await fixture.Service.WaitForCompletionAsync("Peer");
-        await using var denied = new PeerBrowseService(
+        await using var reopened = new PeerBrowseService(
             fixture.Store,
             new FakeTransport(gated: false),
             () => "local",
-            new PeerAccessPolicy(new PeerAccessSettings
-            {
-                BlockedUsernames = ["Peer"],
-            }),
             NullLogger<PeerBrowseService>.Instance);
 
-        await Assert.ThrowsExactlyAsync<PeerBrowseAccessDeniedException>(() =>
-            denied.GetAccessibleAsync(completed.BrowseId));
-        Assert.AreEqual(
-            0,
-            (await denied.ListAsync(null, null, null, null, 20)).Items.Count);
+        PeerBrowseResource? accessible = await reopened.GetAccessibleAsync(completed.BrowseId);
+        Assert.IsNotNull(accessible);
+        Assert.AreEqual(completed.BrowseId, accessible.BrowseId);
+        Assert.AreEqual(1,
+            (await reopened.ListAsync(null, null, null, null, 20)).Items.Count);
     }
 
     [TestMethod]
@@ -303,7 +299,6 @@ public sealed class PeerBrowseServiceTests
                 Store,
                 Transport,
                 () => LocalAccount,
-                new PeerAccessPolicy(new PeerAccessSettings()),
                 logger ?? NullLogger<PeerBrowseService>.Instance);
         }
 

@@ -198,6 +198,33 @@ public sealed class UploadSchedulerTests
     }
 
     [TestMethod]
+    public void NewestPage_UsesStableDescendingTimelineBoundary()
+    {
+        var scheduler = CreateScheduler(slots: 1);
+        _ = Admit(scheduler, "Active", "active");
+        var oldest = Admit(scheduler, "A", "one", requestedAt: DateTimeOffset.UnixEpoch.AddSeconds(1));
+        var middle = Admit(scheduler, "B", "two", requestedAt: DateTimeOffset.UnixEpoch.AddSeconds(2));
+        var newest = Admit(scheduler, "C", "three", requestedAt: DateTimeOffset.UnixEpoch.AddSeconds(3));
+
+        UploadQueuePage first = scheduler.GetNewestPage(null, null, 2);
+        CollectionAssert.AreEqual(
+            new[] { newest.Id, middle.Id },
+            first.Items.Select(item => item.TransferId).ToArray());
+        Assert.AreEqual(middle.Id, first.NextTransferId);
+
+        _ = Admit(scheduler, "D", "later", requestedAt: DateTimeOffset.UnixEpoch.AddSeconds(4));
+        UploadQueuePage second = scheduler.GetNewestPage(
+            first.NextRequestedAtUtc,
+            first.NextTransferId,
+            2);
+
+        CollectionAssert.AreEqual(
+            new[] { oldest.Id },
+            second.Items.Select(item => item.TransferId).ToArray());
+        Assert.IsNull(second.NextTransferId);
+    }
+
+    [TestMethod]
     public void ConcurrentDuplicateAdmission_CreatesExactlyOneTransfer()
     {
         var scheduler = CreateScheduler(slots: 1);

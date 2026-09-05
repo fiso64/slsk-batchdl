@@ -24,6 +24,7 @@ public sealed record ExactFileTransferResult(
 public enum ExactFileTransferStatus
 {
     Completed,
+    AlreadyExists,
     ManuallySkipped,
 }
 
@@ -37,6 +38,12 @@ public sealed record ExactFileTransferOutcome(
 
     public static ExactFileTransferOutcome ManuallySkipped(PeerFileTarget target)
         => new(ExactFileTransferStatus.ManuallySkipped, null, target);
+
+    public static ExactFileTransferOutcome AlreadyExists(PeerFileTarget target, string outputPath)
+        => new(
+            ExactFileTransferStatus.AlreadyExists,
+            new ExactFileTransferResult(outputPath, target),
+            target);
 }
 
 public sealed class ExactPeerFileTransferRunner
@@ -76,18 +83,31 @@ public sealed class ExactPeerFileTransferRunner
         CancellationToken? ct = null,
         bool publishToDuplicateCache = true,
         Job? parentJob = null,
-        bool deferTerminalCompletion = false)
+        bool deferTerminalCompletion = false,
+        bool allowOverwrite = true,
+        bool protectPublishedOutput = false)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(owner);
         if (maxStaleTimeMs <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxStaleTimeMs));
 
+        CancellationToken cancellationToken = ct ?? CancellationToken.None;
+        using var outputClaim = await downloadedFiles.ClaimOutputPathAsync(
+            outputPath,
+            cancellationToken).ConfigureAwait(false);
+
+        if (protectPublishedOutput
+            && File.Exists(outputPath)
+            && downloadedFiles.IsPathOwnedByAnotherTarget(outputPath, target))
+        {
+            return ExactFileTransferOutcome.AlreadyExists(target, outputPath);
+        }
+
         if (downloadedFiles.TryGetReusable(target, out var existingDownload))
         {
             var existingPath     = existingDownload.OutputPath;
             var outputFileInfo   = new FileInfo(outputPath);
-            var existingFileInfo = new FileInfo(existingPath);
 
             DownloadLogMessages.JobDecision(
                 logger,
@@ -95,23 +115,35 @@ public sealed class ExactPeerFileTransferRunner
                 "reusing-existing-transfer",
                 null);
 
-            if (!outputFileInfo.Exists || outputFileInfo.Length != existingFileInfo.Length)
+            if (!PathEquals(existingPath, outputPath))
             {
+                if (outputFileInfo.Exists && !allowOverwrite)
+                    return ExactFileTransferOutcome.AlreadyExists(target, outputPath);
                 DownloadLogMessages.JobDecision(
                     logger,
                     owner.Id,
                     "copying-reused-transfer",
                     null);
-                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-                File.Copy(existingPath!, outputPath, true);
+                downloadedFiles.WithExclusiveAccess(() =>
+                {
+                    downloadedFiles.InvalidatePath(outputPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                    File.Copy(existingPath, outputPath, true);
+                    downloadedFiles.Publish(outputPath, target);
+                    return true;
+                });
             }
 
-            return ExactFileTransferOutcome.Completed(new ExactFileTransferResult(outputPath, existingDownload.Target));
+            return ExactFileTransferOutcome.Completed(new ExactFileTransferResult(outputPath, target));
         }
 
-        await clientManager.WaitUntilReadyAsync(ct ?? CancellationToken.None);
+        if (!allowOverwrite && File.Exists(outputPath))
+            return ExactFileTransferOutcome.AlreadyExists(target, outputPath);
+
+        await clientManager.WaitUntilReadyAsync(cancellationToken);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         string incompleteOutputPath = transfer.NoIncompleteExt ? outputPath : outputPath + ".incomplete";
+        downloadedFiles.InvalidatePath(incompleteOutputPath);
         var transferId = TransferIds.New();
         int attemptCount = 0;
         Guid currentAttemptId = Guid.Empty;
@@ -123,26 +155,28 @@ public sealed class ExactPeerFileTransferRunner
             stateChanged: (state) =>
             {
                 staleActivity?.ReportState(state.Transfer);
-                events.RaiseDownloadStateChanged(
+                events.RaiseDownloadStateChangedWithSpeed(
                     transferId,
                     owner,
                     target,
                     outputPath,
                     state.Transfer.State,
                     state.Transfer.BytesTransferred,
-                    target.Size ?? 0);
+                    target.Size ?? 0,
+                    state.Transfer.AverageSpeed);
             },
             progressUpdated: (progress) =>
             {
                 staleActivity?.ReportProgress(progress.Transfer);
-                owner.BytesTransferred = progress.PreviousBytesTransferred;
-                events.RaiseDownloadProgress(
+                owner.BytesTransferred = progress.Transfer.BytesTransferred;
+                events.RaiseDownloadProgressWithSpeed(
                     transferId,
                     owner,
                     target,
                     outputPath,
-                    progress.PreviousBytesTransferred,
-                    target.Size ?? 0);
+                    progress.Transfer.BytesTransferred,
+                    target.Size ?? 0,
+                    progress.Transfer.AverageSpeed);
             }
         );
 
@@ -363,7 +397,14 @@ public sealed class ExactPeerFileTransferRunner
         {
             try
             {
-                Utils.Move(incompleteOutputPath, outputPath);
+                downloadedFiles.WithExclusiveAccess(() =>
+                {
+                    downloadedFiles.InvalidatePath(outputPath);
+                    Utils.Move(incompleteOutputPath, outputPath);
+                    if (publishToDuplicateCache)
+                        downloadedFiles.Publish(outputPath, target);
+                    return true;
+                });
             }
             catch (Exception ex)
             {
@@ -399,7 +440,7 @@ public sealed class ExactPeerFileTransferRunner
         }
 
         var result = new ExactFileTransferResult(outputPath, target, transferId, Math.Max(attemptCount, 1));
-        if (publishToDuplicateCache)
+        if (publishToDuplicateCache && transfer.NoIncompleteExt)
             downloadedFiles.Publish(result.OutputPath, result.Target);
         activeDownloads.TryRemove(transferId, out _);
 
@@ -429,6 +470,14 @@ public sealed class ExactPeerFileTransferRunner
             or UserNotFoundException
             or TransferRejectedException
             or StaleDownloadException);
+
+    private static bool PathEquals(string left, string right)
+        => string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal);
 
     static string GetStateLabel(TransferStates s)
     {

@@ -7,7 +7,7 @@
   import type { PrototypeScenario } from '../mock/types';
   import type { UserLinkActions } from '../prototype/navigation';
   import type { PrototypeMutationState } from '../prototype/state';
-  import type { ProposedBulkActionRequestDto, ProposedTransferHistoryArchiveRequestDto } from '../prototype/contracts/transfers';
+  import type { ArchiveTransfersRequestDto, BulkCancelTransfersRequestDto, TransferArchiveCommand } from '../prototype/contracts/transfers';
   import { downloadsForScenario, type DownloadFolderEntry, type DownloadItem } from '../prototype/downloads';
   import { groupAdjacentBy } from '../prototype/grouping';
   import type { FolderItemFile, TransferPresentation } from '../prototype/items';
@@ -106,8 +106,8 @@
   function removeItem(entry: TransferTimelineEntry): void {
     const item = sourceItem(entry.id);
     if (!item || !isTerminalTransfer(presentationFor(item))) return;
-    const request: ProposedTransferHistoryArchiveRequestDto = { direction: 'download', transferIds: item.sourceTransferIds, semantics: 'archive-from-history' };
-    void request;
+    const requests: TransferArchiveCommand[] = item.sourceTransferIds.map((transferId) => ({ transferId, request: { archived: true } }));
+    void requests;
     mutation = { phase: 'pending', label: 'Removing from history…' };
     removedItems = new Set(removedItems).add(item.id);
     mutation = { phase: 'succeeded', label: 'Removed from history' };
@@ -117,7 +117,7 @@
     const folder = sourceFolder(entry.id);
     const sourceFile = folder?.files.find((candidate) => candidate.id === file.id);
     if (!folder || !sourceFile || !isTerminalTransfer(sourceFile.transfer)) return;
-    const request: ProposedTransferHistoryArchiveRequestDto = { direction: 'download', transferIds: [file.id], semantics: 'archive-from-history' };
+    const request: TransferArchiveCommand = { transferId: file.id, request: { archived: true } };
     void request;
     mutation = { phase: 'pending', label: 'Removing file history…' };
     removedFiles = new Set(removedFiles).add(fileCancellationKey(folder.id, file.id));
@@ -133,7 +133,10 @@
   }
 
   function cancelBulk(): void {
-    const request: ProposedBulkActionRequestDto = { direction: 'download', scope: 'current-view', action: 'cancel', filter: bulkCancelMode === 'active' ? 'in-progress' : bulkCancelMode };
+    const request: BulkCancelTransfersRequestDto = {
+      direction: 'Download',
+      scope: bulkCancelMode === 'active' ? 'InProgress' : bulkCancelMode === 'queued' ? 'Queued' : 'All',
+    };
     void request;
     const targets = visibleDownloads.filter(cancelModeMatches);
     mutation = { phase: 'pending', label: `Cancelling ${targets.length} download${targets.length === 1 ? '' : 's'}…` };
@@ -143,7 +146,7 @@
 
   function removeCompleted(): void {
     const targets = visibleDownloads.filter((item) => isTerminalTransfer(presentationFor(item)));
-    const request: ProposedBulkActionRequestDto = { direction: 'download', scope: 'current-view', action: 'archive-terminal', filter: 'terminal' };
+    const request: ArchiveTransfersRequestDto = { archived: true, direction: 'download' };
     void request;
     mutation = { phase: 'pending', label: `Removing ${targets.length} download${targets.length === 1 ? '' : 's'}…` };
     const next = new Set(removedItems); for (const item of targets) next.add(item.id); removedItems = next;

@@ -1,5 +1,6 @@
 using Sockseek.Core;
 using Sockseek.Core.Models;
+using Sockseek.Core.Planning;
 
 namespace Sockseek.Core.Jobs;
     public enum AlbumDirectoryResolutionPolicy
@@ -83,12 +84,16 @@ namespace Sockseek.Core.Jobs;
             return attempt;
         }
 
-        internal static SongJob CreateTrackJob(AlbumFile file)
-            => new(new SongQuery(file.Query))
+        internal SongJob CreateTrackJob(AlbumFile file)
+        {
+            var child = new SongJob(new SongQuery(file.Query))
             {
                 ResolvedTarget = file.Candidate,
                 Candidates = [file.Candidate],
             };
+            SubmissionIdentity.AssignExecutionChild(this, child);
+            return child;
+        }
 
         internal SongJob AddSupplementalTrackJob(AlbumFile file)
         {

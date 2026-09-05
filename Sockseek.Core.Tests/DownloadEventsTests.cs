@@ -6,6 +6,7 @@ using Sockseek.Core.Models;
 using Sockseek.Core.PeerBrowsing;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Snapshots;
 using Soulseek;
 
 namespace Tests.Eventing
@@ -61,7 +62,7 @@ namespace Tests.Eventing
             events.TransferCompleted += change => completed = change;
 
             Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, outputPath);
-            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate.Target, outputPath, 4096L, 10_000L);
+            Invoke(events, "RaiseDownloadProgressWithSpeed", transferId, song, candidate.Target, outputPath, 4096L, 10_000L, 1_234d);
             Invoke(events, "RaiseDownloadStateChanged", transferId, song, candidate.Target, outputPath, TransferStates.InProgress, 4096L, 10_000L);
             Invoke(events, "RaiseDownloadAttemptFailed", transferId, song, candidate.Target, outputPath, attemptOutputPath, 1, 3, new InvalidOperationException("boom"));
             Invoke(events, "RaiseTransferCompleted", transferId, song, candidate.Target, outputPath, 10_000L, 2);
@@ -78,13 +79,25 @@ namespace Tests.Eventing
             Assert.AreEqual(transferId, failed.TransferId);
             Assert.AreEqual(outputPath, started.Transfer.LocalPath);
             Assert.AreEqual(candidate.Filename, started.Transfer.RemotePath);
+            Assert.AreEqual("Track.mp3", started.Transfer.File?.Name);
+            Assert.AreEqual(10_000L, started.Transfer.File?.Size);
+            Assert.AreEqual(".mp3", started.Transfer.File?.Extension);
+            Assert.AreEqual(180, started.Transfer.File?.Length);
             Assert.AreEqual(4096L, progressed.Transfer.BytesTransferred);
             Assert.AreEqual(10_000L, progressed.Transfer.TotalBytes);
+            Assert.IsNotNull(progressed.Transfer.RequestedAtUtc);
+            Assert.IsNotNull(progressed.Transfer.StartedAtUtc);
+            Assert.IsNotNull(progressed.Transfer.LastProgressAtUtc);
+            Assert.AreEqual(1_234L, progressed.Transfer.BytesPerSecond);
+            Assert.AreEqual(started.Transfer.File, progressed.Transfer.File);
             Assert.AreEqual(outputPath, failed.Transfer.LocalPath);
             Assert.AreEqual(attemptOutputPath, failed.OutputPath);
             Assert.AreEqual(1, failed.Transfer.AttemptCount);
             Assert.AreEqual(outputPath, completed.FinalLocalPath);
             Assert.AreEqual(10_000L, completed.Transfer.BytesTransferred);
+            Assert.AreEqual(
+                TransferSnapshotTerminalOutcome.Succeeded,
+                completed.Transfer.TerminalOutcome);
             Assert.IsTrue(completed.Transfer.Revision > failed.Transfer.Revision);
             Assert.AreEqual(1, progressEventCount, "Late progress must be discarded after the terminal barrier.");
         }

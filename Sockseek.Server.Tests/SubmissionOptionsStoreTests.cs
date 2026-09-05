@@ -8,6 +8,33 @@ namespace Sockseek.Server.Tests;
 public sealed class SubmissionOptionsStoreTests
 {
     [TestMethod]
+    public void ItemPatchComposesOverWorkflowProfilesAndPatch()
+    {
+        var store = new SubmissionOptionsStore();
+        Guid workflowId = Guid.NewGuid();
+        var job = new SearchJob("query") { WorkflowId = workflowId };
+        store.SetWorkflowOptions(workflowId, new SubmissionOptionsDto(
+            OutputParentDir: "workflow-output",
+            ProfileNames: ["music"],
+            ProfileContext: new Dictionary<string, bool> { ["interactive"] = true },
+            DownloadSettings: new DownloadSettingsPatchDto(
+                Search: new SearchSettingsPatchDto(NoBrowseFolder: true))));
+        store.SetJobOptions(job.Id, new SubmissionOptionsDto(
+            ProfileContext: new Dictionary<string, bool> { ["interactive"] = false },
+            DownloadSettings: new DownloadSettingsPatchDto(
+                Transfer: new TransferSettingsPatchDto(MaxStaleTime: 17))));
+
+        SubmissionOptionsDto? effective = store.GetOptions(job);
+
+        Assert.IsNotNull(effective);
+        CollectionAssert.AreEqual(new[] { "music" }, effective.ProfileNames?.ToArray());
+        Assert.AreEqual("workflow-output", effective.OutputParentDir);
+        Assert.AreEqual(false, effective.ProfileContext?["interactive"]);
+        Assert.AreEqual(true, effective.DownloadSettings?.Search?.NoBrowseFolder);
+        Assert.AreEqual(17, effective.DownloadSettings?.Transfer?.MaxStaleTime);
+    }
+
+    [TestMethod]
     public void RetirementClearsExactGenerationStateWithoutDeletingLaterSameIdOptions()
     {
         var store = new SubmissionOptionsStore();

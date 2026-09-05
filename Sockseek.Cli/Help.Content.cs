@@ -255,8 +255,10 @@ public static partial class Help
                                     default: off)
     --upload-slots <num>            Maximum concurrent uploads (default: 10)
     --upload-speed-limit-kib <n>    Aggregate upload limit in KiB/s (default: unlimited)
-    --peer-blocked-user <name>      Replace exact blocked peer usernames. Prefix with '+ ' to append.
-    --peer-blocked-ip <address>     Replace exact blocked IPv4/IPv6 addresses. Prefix with '+ ' to append.
+    --upload-blocked-user <name>    Replace usernames denied access to your shares. Prefix with '+ ' to append.
+    --upload-blocked-ip <address>   Replace IPs denied access to your shares. Prefix with '+ ' to append.
+    --private-message-blocked-user <name>
+                                    Replace usernames whose incoming DMs are discarded. Prefix with '+ ' to append.
     --chat-room <name>              Replace rooms joined by the daemon. Prefix with '+ ' to append.
     --data-dir <path>               Directory for daemon data, including sockseek.db
     --no-retention                  Disable scheduled history retention
@@ -698,6 +700,12 @@ On-Complete Actions
       leaves the state unchanged and updates only the path.
     If when= is omitted, it behaves like when=completed. This preserves the usual ""run when work
     completed"" behavior while avoiding commands for already-existing or not-found-last-time skips.
+    Chained actions evaluate when= and outcome/path variables against the result of the preceding
+    action. For example, if an update-index action changes a failure to success, the next
+    when=success action runs and sees the updated path.
+    Transfer history records the peer transfer and final file-placement outcome before on-complete
+    actions run. A later command failure can therefore fail the job without rewriting a successfully
+    completed transfer as failed.
 
   Command-output variables
     See the shared Variables reference, also available with sockseek --help variables. On-complete

@@ -81,6 +81,38 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public void SearchSession_RetainsLockedRowsAndOnePeerObservationWithoutMakingThemDownloadCandidates()
+        {
+            var now = new DateTimeOffset(2034, 1, 2, 3, 4, 5, TimeSpan.Zero);
+            var session = new SearchSession(Guid.NewGuid(), new FixedTimeProvider(now));
+            var publicFile = TestHelpers.CreateSlFile(@"Music\Artist\Public.flac", length: 180);
+            var lockedFile = TestHelpers.CreateSlFile(@"Private\Artist\Locked.flac", length: 181);
+            var response = new SearchResponse(
+                "ExactPeer",
+                1,
+                hasFreeUploadSlot: false,
+                uploadSpeed: 12_345,
+                queueLength: 7,
+                fileList: [publicFile],
+                lockedFileList: [lockedFile]);
+
+            session.AddResponse(response);
+            session.Complete();
+
+            Assert.AreEqual(1, session.PublicFileCount);
+            Assert.AreEqual(1, session.LockedFileCount);
+            Assert.AreEqual(1, session.ObservedPeerCount);
+            SearchRawResult[] rows = session.RawSnapshot().ToArray();
+            Assert.AreEqual(2, rows.Length);
+            Assert.AreEqual(SearchResultVisibility.Public, rows[0].Visibility);
+            Assert.AreEqual(SearchResultVisibility.Locked, rows[1].Visibility);
+            Assert.AreEqual(7, rows[0].QueueLength);
+            Assert.AreEqual(now, rows[0].ObservedAtUtc);
+            Assert.AreEqual(now, rows[1].ObservedAtUtc);
+            Assert.AreEqual(1, session.Snapshot().Count);
+        }
+
+        [TestMethod]
         public void SearchSession_UsesInjectedClock_AndIsolatesObservers()
         {
             var now = new DateTimeOffset(2033, 5, 6, 7, 8, 9, TimeSpan.Zero);

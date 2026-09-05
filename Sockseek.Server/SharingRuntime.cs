@@ -60,18 +60,18 @@ public sealed class SharingRuntime : IAsyncDisposable
         scans = new ShareScanCoordinator(catalogs);
 
         SoulseekClientManager manager = soulseek.ClientManager;
-        AccessPolicy = soulseek.AccessPolicy;
+        Restrictions = soulseek.Restrictions;
         Scheduler = new UploadScheduler(settings.Uploads);
         Uploads = new UploadCoordinator(
             catalogs,
             () => manager.Client,
-            AccessPolicy,
+            Restrictions,
             Scheduler,
             uploadLogger);
         Adapter = new SoulseekSharingAdapter(
             catalogs,
             Uploads,
-            AccessPolicy,
+            Restrictions,
             settings.Uploads,
             () => manager.Client,
             soulseek.LocalProfile.Description,
@@ -87,7 +87,7 @@ public sealed class SharingRuntime : IAsyncDisposable
     public SoulseekClientManager ClientManager { get; }
     public ShareCatalogManager Catalogs => catalogs;
     public ShareScanCoordinator Scans => scans;
-    public PeerAccessPolicy AccessPolicy { get; }
+    public PeerRestrictionPolicy Restrictions { get; }
     public UploadScheduler Scheduler { get; }
     public UploadCoordinator Uploads { get; }
     public SoulseekSharingAdapter Adapter { get; }
@@ -307,7 +307,7 @@ public sealed class SharingRuntime : IAsyncDisposable
         var dto = new ShareScanStateDto(
             scanId,
             revision,
-            state.Phase,
+            state.Phase.ToServer(),
             state.StartedAtUtc ?? DateTimeOffset.UtcNow,
             state.FinishedAtUtc,
             result?.DirectoriesVisited ?? progress?.DirectoriesDiscovered ?? 0,
@@ -361,7 +361,7 @@ public sealed class SharingRuntime : IAsyncDisposable
         }
         bool configured = settings.Sharing.Roots.Count > 0;
         bool catalogReady = metadata is not null;
-        bool catalogStale = catalogReady && last?.Phase == ShareScanPhase.Failed;
+        bool catalogStale = catalogReady && last?.Phase == ServerShareScanPhase.Failed;
         DaemonFeatureState state;
         string? reason;
         if (!configured)
@@ -394,6 +394,7 @@ public sealed class SharingRuntime : IAsyncDisposable
             state = DaemonFeatureState.Ready;
             reason = null;
         }
+        PeerRestrictionSnapshot restrictionSnapshot = Restrictions.Snapshot;
         return new SharingStateDto(
             state,
             reason,
@@ -401,8 +402,8 @@ public sealed class SharingRuntime : IAsyncDisposable
                 .Select(root => root.EffectiveAlias)
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
-            settings.PeerAccess.BlockedUsernames.Count,
-            settings.PeerAccess.BlockedIpAddresses.Count,
+            restrictionSnapshot.UploadAccess.BlockedUsernameCount,
+            restrictionSnapshot.ConfiguredUploadBlockedIpAddresses.Count,
             new ShareCatalogStateDto(
                 metadata?.GenerationId,
                 metadata?.DirectoryCount ?? 0,
@@ -469,6 +470,8 @@ public sealed class SharingRuntime : IAsyncDisposable
         }
         return scans.Cancel();
     }
+
+    public void PublishPeerRestrictionsChanged() => PublishState();
 
     private void PublishState()
     {

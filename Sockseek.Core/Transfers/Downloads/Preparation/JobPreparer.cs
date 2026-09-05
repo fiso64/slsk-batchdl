@@ -24,7 +24,8 @@ public static class JobPreparer
         resolver ??= DefaultJobSettingsResolver.Instance;
 
         foreach (var job in queue.Jobs)
-            PrepareJob(job, queue, OutputScope.Empty, startConfig, contexts, editors, skippers, resolver);
+            PrepareJob(job, queue, OutputScope.Empty, startConfig, contexts, editors, skippers, resolver,
+                JobSettingsInheritance.None);
 
         return contexts;
     }
@@ -36,7 +37,8 @@ public static class JobPreparer
         DownloadSettings parentConfig,
         IJobSettingsResolver? resolver = null,
         JobList? explicitOwnerList = null,
-        JobContext? parentCtx = null)
+        JobContext? parentCtx = null,
+        bool rootSettingsAreFinal = false)
     {
         var newContexts = new Dictionary<Guid, JobContext>();
         var editors     = new Dictionary<(string path, M3uOption option), M3uEditor>();
@@ -63,7 +65,15 @@ public static class JobPreparer
         // root is a bare leaf job (not a JobList).
         var ownerList = root as JobList ?? explicitOwnerList ?? new JobList(null, [root]);
         bool useInheritedScopeForRootEditors = explicitOwnerList != null && root is JobList;
-        PrepareJob(root, ownerList, inheritedScope, parentConfig, newContexts, editors, skippers, resolver, useInheritedScopeForRootEditors);
+        // A newly accepted root is composed from the normal baseline/profile/request
+        // layers. Only a subtree produced by an already-prepared parent inherits that
+        // parent's search constraints. This matches JobPlanner's root/child boundary
+        // and avoids applying root defaults again after a matching auto-profile.
+        var rootInheritance = parentCtx != null || explicitOwnerList != null
+            ? JobSettingsInheritance.SearchConstraints
+            : JobSettingsInheritance.None;
+        PrepareJob(root, ownerList, inheritedScope, parentConfig, newContexts, editors, skippers, resolver,
+            rootInheritance, useInheritedScopeForRootEditors, rootSettingsAreFinal);
         return newContexts;
     }
 
@@ -126,44 +136,29 @@ public static class JobPreparer
         Dictionary<(string, M3uOption), M3uEditor> editors,
         Dictionary<(string, SkipMode, bool), TrackSkipper> skippers,
         IJobSettingsResolver resolver,
-        bool useInheritedScopeForCurrentJob = false)
+        JobSettingsInheritance inheritance,
+        bool useInheritedScopeForCurrentJob = false,
+        bool settingsAreFinal = false)
     {
         var ctx = new JobContext();
 
-        job.Config = resolver.Resolve(parentConfig, job);
-        if (job is RemoteFileJob or RemoteDirectoryJob)
-        {
-            RemoteTransferNameFormatPolicy.ApplyInherited(job.Config.Output);
-        }
+        job.Config = job.PlannedEffectiveSettings is { } planned
+            ? UsePlannedSettings(job, planned)
+            : settingsAreFinal
+                ? ApplySemanticSettings(
+                job,
+                SettingsCloner.Clone(parentConfig),
+                consumeExtractorHints: true)
+                : ResolveSemanticSettings(
+                    job,
+                    parentConfig,
+                    resolver,
+                    inheritance,
+                    consumeExtractorHints: true);
         var childScope = OutputScope.ForPreparedJob(job, inheritedScope, job.Config.Output);
         ctx.OutputScope = useInheritedScopeForCurrentJob ? inheritedScope : childScope;
 
         ctx.EnablesIndexByDefault = job.EnablesIndexByDefault;
-
-        if (job.ExtractorCond != null)
-        {
-            job.Config.Search.NecessaryCond.AddConditions(job.ExtractorCond);
-            if (job is not ExtractJob)
-                job.ExtractorCond = null;
-        }
-        if (job.ExtractorPrefCond != null)
-        {
-            job.Config.Search.PreferredCond.AddConditions(job.ExtractorPrefCond);
-            if (job is not ExtractJob)
-                job.ExtractorPrefCond = null;
-        }
-        if (job.ExtractorFolderCond != null)
-        {
-            job.Config.Search.NecessaryFolderCond.AddConditions(job.ExtractorFolderCond);
-            if (job is not ExtractJob)
-                job.ExtractorFolderCond = null;
-        }
-        if (job.ExtractorPrefFolderCond != null)
-        {
-            job.Config.Search.PreferredFolderCond.AddConditions(job.ExtractorPrefFolderCond);
-            if (job is not ExtractJob)
-                job.ExtractorPrefFolderCond = null;
-        }
 
         SetupIndexEditor(job, ctx, ownerList, editors);
         SetupPlaylistEditor(job, ctx, ownerList, editors);
@@ -176,8 +171,85 @@ public static class JobPreparer
         if (job is JobList childList)
         {
             foreach (var child in childList.Jobs)
-                PrepareJob(child, childList, childScope, job.Config, contexts, editors, skippers, resolver);
+                PrepareJob(child, childList, childScope, job.Config, contexts, editors, skippers, resolver,
+                    JobSettingsInheritance.SearchConstraints,
+                    settingsAreFinal: child.PlannedEffectiveSettings != null);
         }
+    }
+
+    /// <summary>
+    /// Resolves the semantic settings of one planned/runtime node without
+    /// creating filesystem editors or skip indexes. Planning can therefore use
+    /// exactly the runtime composition and extractor-condition semantics.
+    /// </summary>
+    public static DownloadSettings ResolveSemanticSettings(
+        Job job,
+        DownloadSettings parentConfig,
+        IJobSettingsResolver resolver,
+        JobSettingsInheritance inheritance,
+        bool consumeExtractorHints = false)
+    {
+        DownloadSettings settings = resolver.Resolve(parentConfig, job, inheritance);
+        return ApplySemanticSettings(job, settings, consumeExtractorHints);
+    }
+
+    private static DownloadSettings ApplySemanticSettings(
+        Job job,
+        DownloadSettings settings,
+        bool consumeExtractorHints)
+    {
+        if (job is RemoteFileJob or RemoteDirectoryJob)
+            RemoteTransferNameFormatPolicy.ApplyInherited(settings.Output);
+
+        if (job.ExtractorCond != null)
+        {
+            settings.Search.NecessaryCond.AddConditions(job.ExtractorCond);
+            if (consumeExtractorHints && job is not ExtractJob)
+                job.ExtractorCond = null;
+        }
+        if (job.ExtractorPrefCond != null)
+        {
+            settings.Search.PreferredCond.AddConditions(job.ExtractorPrefCond);
+            if (consumeExtractorHints && job is not ExtractJob)
+                job.ExtractorPrefCond = null;
+        }
+        if (job.ExtractorFolderCond != null)
+        {
+            settings.Search.NecessaryFolderCond.AddConditions(job.ExtractorFolderCond);
+            if (consumeExtractorHints && job is not ExtractJob)
+                job.ExtractorFolderCond = null;
+        }
+        if (job.ExtractorPrefFolderCond != null)
+        {
+            settings.Search.PreferredFolderCond.AddConditions(job.ExtractorPrefFolderCond);
+            if (consumeExtractorHints && job is not ExtractJob)
+                job.ExtractorPrefFolderCond = null;
+        }
+
+        if (job is SearchJob { Definition: null } searchJob)
+            searchJob.Definition = SearchDefinition.Create(searchJob, settings.Search);
+        if (job is SearchJob or SongJob or AlbumJob or AggregateJob or AlbumAggregateJob)
+            job.ExecutedSearchDefinition ??= SearchDefinition.Create(job, settings.Search);
+        return settings;
+    }
+
+    private static DownloadSettings UsePlannedSettings(
+        Job job,
+        DownloadSettings planned)
+    {
+        var settings = SettingsCloner.Clone(planned);
+        // The planner already applied these patches to the retained settings
+        // and propagated extractor hints to a resolved Extract result. Clearing
+        // leaf hints prevents any later subtree preparation from applying them
+        // a second time.
+        if (job is not ExtractJob)
+        {
+            job.ExtractorCond = null;
+            job.ExtractorPrefCond = null;
+            job.ExtractorFolderCond = null;
+            job.ExtractorPrefFolderCond = null;
+        }
+        return settings;
     }
 
     private static void SetupIndexEditor(Job job, JobContext ctx, JobList ownerList,

@@ -73,7 +73,7 @@ public class LocalCliBackendTests
                             Output: new OutputSettingsPatchDto(
                                 NameFormat: "{artist}/{title}",
                                 WritePlaylist: true),
-                            Extraction: new ExtractionSettingsPatchDto(RequestedMode: ExtractionMode.Song)))]));
+                            Extraction: new ExtractionSettingsPatchDto(RequestedMode: ServerExtractionMode.Song)))]));
 
             Assert.AreEqual(ServerJobKind.JobList, accepted.Kind);
             Assert.AreNotEqual(Guid.Empty, accepted.WorkflowId);
@@ -499,8 +499,7 @@ public class LocalCliBackendTests
                 searchJob.Id,
                 new StartFolderDownloadRequestDto(
                     retrievedFolder.Ref,
-                    AlbumQuery: new AlbumQueryDto("Artist", "Album", "Track One", null, false),
-                    SelectedFolder: retrievedFolder),
+                    AlbumQuery: new AlbumQueryDto("Artist", "Album", "Track One", null, false)),
                 cts.Token);
 
             Assert.IsNotNull(downloadSummary);

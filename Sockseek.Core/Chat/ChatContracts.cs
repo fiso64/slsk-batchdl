@@ -9,7 +9,6 @@ public static class ChatLimits
     public const int MaximumFailureReasonLength = 2_048;
     public const int MaximumPageSize = 200;
     public const int DefaultPageSize = 100;
-    public const int LiveMessageTailSize = 100;
     public const int MaximumDesiredRooms = 100;
     public const int MaximumRoomMembers = 20_000;
     public const int MaximumRoomOperators = 1_000;

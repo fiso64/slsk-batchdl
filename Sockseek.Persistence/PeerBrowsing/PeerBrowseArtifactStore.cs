@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Sockseek.Core;
@@ -683,6 +684,256 @@ public sealed class PeerBrowseArtifactStore
             sampleRate,
             length,
             attributes.Count == 0 ? null : attributes);
+    }
+
+    /// <summary>
+    /// Searches one immutable artifact as a flat mixed projection. The FTS row
+    /// narrows candidates; <c>ordinal_contains</c> is the authoritative
+    /// post-filter so indexed and short-query fallback paths have identical
+    /// public semantics.
+    /// </summary>
+    public async Task<PeerBrowseSearchPage> SearchAsync(
+        Guid browseId,
+        string query,
+        string? afterSortKey,
+        PeerBrowseSearchEntryKind? afterKind,
+        long? afterId,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(query);
+        query = query.Trim();
+        ValidateSearchPage(afterSortKey, afterKind, afterId, limit);
+        await RequireCompleteAsync(browseId, cancellationToken).ConfigureAwait(false);
+        await using ArtifactLease lease = await AcquireLeaseAsync(browseId, cancellationToken).ConfigureAwait(false);
+        await using SqliteConnection connection = await OpenArtifactAsync(
+            lease.ArtifactPath,
+            cancellationToken).ConfigureAwait(false);
+        if (!await HasSearchIndexAsync(connection, cancellationToken).ConfigureAwait(false))
+        {
+            throw new PeerBrowseSearchUnavailableException(
+                "This retained browse predates indexed share search; refresh the user's shares to search it.");
+        }
+
+        bool indexed = query.EnumerateRunes().Take(3).Count() == 3;
+        string directPredicate = indexed
+            ? "browse_search MATCH $fts AND ordinal_contains(display_path, $query)"
+            : "ordinal_contains(display_path, $query)";
+        await using var command = connection.CreateCommand();
+        command.CommandText = $$"""
+            WITH RECURSIVE
+            direct_matches(entry_kind, entry_id, display_path) AS MATERIALIZED (
+                SELECT CAST(entry_kind AS INTEGER), CAST(entry_id AS INTEGER), display_path
+                FROM browse_search
+                WHERE {{directPredicate}}
+            ),
+            file_matches AS MATERIALIZED (
+                SELECT f.file_id, f.directory_id, f.visibility, f.name,
+                       match.display_path, f.size_bytes, f.extension, f.bit_rate,
+                       f.bit_depth, f.sample_rate, f.length_seconds
+                FROM direct_matches match
+                JOIN files f ON f.file_id = match.entry_id
+                WHERE match.entry_kind = 1
+            ),
+            direct_directory_matches(directory_id) AS MATERIALIZED (
+                SELECT entry_id FROM direct_matches WHERE entry_kind = 0
+            ),
+            included_directories(directory_id) AS (
+                SELECT directory_id FROM file_matches
+                UNION
+                SELECT directory_id FROM direct_directory_matches
+                UNION
+                SELECT d.parent_id
+                FROM included_directories included
+                JOIN directories d ON d.directory_id = included.directory_id
+                WHERE d.parent_id IS NOT NULL
+            ),
+            file_ancestry(file_id, directory_id, visibility, size_bytes) AS (
+                SELECT file_id, directory_id, visibility, size_bytes
+                FROM file_matches
+                UNION ALL
+                SELECT ancestry.file_id, d.parent_id, ancestry.visibility, ancestry.size_bytes
+                FROM file_ancestry ancestry
+                JOIN directories d ON d.directory_id = ancestry.directory_id
+                WHERE d.parent_id IS NOT NULL
+            ),
+            directory_totals AS MATERIALIZED (
+                SELECT directory_id,
+                       COUNT(CASE WHEN visibility = 0 THEN 1 END) AS public_count,
+                       COALESCE(saturating_sum(CASE WHEN visibility = 0 THEN size_bytes ELSE 0 END), 0) AS public_bytes,
+                       COUNT(CASE WHEN visibility = 1 THEN 1 END) AS locked_count,
+                       COALESCE(saturating_sum(CASE WHEN visibility = 1 THEN size_bytes ELSE 0 END), 0) AS locked_bytes
+                FROM file_ancestry
+                GROUP BY directory_id
+            ),
+            totals AS MATERIALIZED (
+                SELECT COUNT(CASE WHEN visibility = 0 THEN 1 END) AS public_count,
+                       COALESCE(saturating_sum(CASE WHEN visibility = 0 THEN size_bytes ELSE 0 END), 0) AS public_bytes,
+                       COUNT(CASE WHEN visibility = 1 THEN 1 END) AS locked_count,
+                       COALESCE(saturating_sum(CASE WHEN visibility = 1 THEN size_bytes ELSE 0 END), 0) AS locked_bytes
+                FROM file_matches
+            ),
+            all_rows AS MATERIALIZED (
+                SELECT 0 AS entry_kind,
+                       d.directory_id AS entry_id,
+                       d.directory_id,
+                       d.parent_id AS parent_directory_id,
+                       d.name,
+                       d.display_path,
+                       d.visibility,
+                       COALESCE(t.public_count, 0) AS public_count,
+                       COALESCE(t.public_bytes, 0) AS public_bytes,
+                       COALESCE(t.locked_count, 0) AS locked_count,
+                       COALESCE(t.locked_bytes, 0) AS locked_bytes,
+                       NULL AS file_size,
+                       NULL AS extension,
+                       NULL AS bit_rate,
+                       NULL AS bit_depth,
+                       NULL AS sample_rate,
+                       NULL AS length_seconds
+                FROM included_directories included
+                JOIN directories d ON d.directory_id = included.directory_id
+                LEFT JOIN directory_totals t ON t.directory_id = d.directory_id
+
+                UNION ALL
+
+                SELECT 1 AS entry_kind,
+                       f.file_id AS entry_id,
+                       f.directory_id,
+                       f.directory_id AS parent_directory_id,
+                       f.name,
+                       f.display_path,
+                       f.visibility,
+                       CASE WHEN f.visibility = 0 THEN 1 ELSE 0 END AS public_count,
+                       CASE WHEN f.visibility = 0 THEN f.size_bytes ELSE 0 END AS public_bytes,
+                       CASE WHEN f.visibility = 1 THEN 1 ELSE 0 END AS locked_count,
+                       CASE WHEN f.visibility = 1 THEN f.size_bytes ELSE 0 END AS locked_bytes,
+                       f.size_bytes AS file_size,
+                       f.extension,
+                       f.bit_rate,
+                       f.bit_depth,
+                       f.sample_rate,
+                       f.length_seconds
+                FROM file_matches f
+            ),
+            page_rows AS (
+                SELECT *
+                FROM all_rows
+                WHERE $after_path IS NULL
+                   OR display_path > $after_path COLLATE BINARY
+                   OR (display_path = $after_path COLLATE BINARY AND entry_kind > $after_kind)
+                   OR (display_path = $after_path COLLATE BINARY
+                       AND entry_kind = $after_kind AND entry_id > $after_id)
+                ORDER BY display_path COLLATE BINARY, entry_kind, entry_id
+                LIMIT $limit
+            )
+            SELECT 0 AS sentinel,
+                   page.entry_kind, page.entry_id, page.directory_id,
+                   page.parent_directory_id, page.name, page.display_path,
+                   page.visibility, page.public_count, page.public_bytes,
+                   page.locked_count, page.locked_bytes, page.file_size,
+                   page.extension, page.bit_rate, page.bit_depth,
+                   page.sample_rate, page.length_seconds,
+                   totals.public_count, totals.public_bytes,
+                   totals.locked_count, totals.locked_bytes
+            FROM page_rows page
+            CROSS JOIN totals
+
+            UNION ALL
+
+            SELECT 1 AS sentinel,
+                   NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                   NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                   totals.public_count, totals.public_bytes,
+                   totals.locked_count, totals.locked_bytes
+            FROM totals
+            ORDER BY sentinel, display_path COLLATE BINARY, entry_kind, entry_id;
+            """;
+        Add(command, "$query", query);
+        Add(command, "$fts", indexed ? FtsLiteral(query) : null);
+        Add(command, "$after_path", afterSortKey);
+        Add(command, "$after_kind", afterKind is null ? null : (int)afterKind.Value);
+        Add(command, "$after_id", afterId);
+        Add(command, "$limit", checked(limit + 1));
+
+        var items = new List<PeerBrowseSearchEntry>(limit + 1);
+        long publicCount = 0;
+        long publicBytes = 0;
+        long lockedCount = 0;
+        long lockedBytes = 0;
+        await using SqliteDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            publicCount = reader.GetInt64(18);
+            publicBytes = reader.GetInt64(19);
+            lockedCount = reader.GetInt64(20);
+            lockedBytes = reader.GetInt64(21);
+            if (reader.GetInt32(0) != 0)
+                continue;
+            items.Add(new PeerBrowseSearchEntry(
+                (PeerBrowseSearchEntryKind)reader.GetInt32(1),
+                reader.GetInt64(2),
+                reader.GetInt64(3),
+                reader.IsDBNull(4) ? null : reader.GetInt64(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                (PeerBrowseEntryVisibility)reader.GetInt32(7),
+                reader.GetInt64(8),
+                reader.GetInt64(9),
+                reader.GetInt64(10),
+                reader.GetInt64(11),
+                reader.IsDBNull(12) ? null : reader.GetInt64(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                NullableInt(reader, 14),
+                NullableInt(reader, 15),
+                NullableInt(reader, 16),
+                NullableInt(reader, 17)));
+        }
+
+        bool hasMore = items.Count > limit;
+        if (hasMore)
+            items.RemoveAt(items.Count - 1);
+        PeerBrowseSearchEntry? last = hasMore ? items[^1] : null;
+        return new PeerBrowseSearchPage(
+            items,
+            publicCount,
+            publicBytes,
+            lockedCount,
+            lockedBytes,
+            last?.DisplayPath,
+            last?.Kind,
+            last?.EntryId);
+    }
+
+    public async Task<string?> ReadSearchSortKeyAsync(
+        Guid browseId,
+        PeerBrowseSearchEntryKind kind,
+        long entryId,
+        CancellationToken cancellationToken = default)
+    {
+        if (entryId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(entryId));
+        await RequireCompleteAsync(browseId, cancellationToken).ConfigureAwait(false);
+        await using ArtifactLease lease = await AcquireLeaseAsync(browseId, cancellationToken).ConfigureAwait(false);
+        await using SqliteConnection connection = await OpenArtifactAsync(
+            lease.ArtifactPath,
+            cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = kind switch
+        {
+            PeerBrowseSearchEntryKind.Directory =>
+                "SELECT display_path FROM directories WHERE directory_id = $id;",
+            PeerBrowseSearchEntryKind.File =>
+                """
+                SELECT d.display_path || '\\' || f.name
+                FROM files f
+                JOIN directories d ON d.directory_id = f.directory_id
+                WHERE f.file_id = $id;
+                """,
+            _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+        };
+        Add(command, "$id", entryId);
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
     }
 
     public async Task<PeerBrowseDownloadResolution> ResolveDownloadSelectionAsync(
@@ -1502,6 +1753,18 @@ public sealed class PeerBrowseArtifactStore
             Pooling = false,
         }.ToString());
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using (var pragma = connection.CreateCommand())
+        {
+            // Exact totals and ancestor aggregation may need temporary B-trees
+            // for a broad query. Keep that spill disk-backed rather than making
+            // artifact size an implicit memory limit.
+            pragma.CommandText = "PRAGMA temp_store=FILE; PRAGMA busy_timeout=5000;";
+            await pragma.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        connection.CreateAggregate<long, long>(
+            "saturating_sum",
+            static (total, value) => SaturatingAdd(total, value),
+            isDeterministic: true);
         connection.CreateFunction<string?, string?, bool>(
             "ordinal_contains",
             static (value, query) => value is not null
@@ -1588,6 +1851,33 @@ public sealed class PeerBrowseArtifactStore
         if ((afterSortKey is null) != (afterId is null))
             throw new ArgumentException("Both cursor sort key and ID must be supplied together.");
     }
+
+    private static void ValidateSearchPage(
+        string? afterSortKey,
+        PeerBrowseSearchEntryKind? afterKind,
+        long? afterId,
+        int limit)
+    {
+        if (limit is < 1 or > 500)
+            throw new ArgumentOutOfRangeException(nameof(limit), "Page size must be between 1 and 500.");
+        bool hasCursor = afterSortKey is not null || afterKind is not null || afterId is not null;
+        if (hasCursor && (afterSortKey is null || afterKind is null || afterId is null or <= 0))
+            throw new ArgumentException("All mixed-search cursor values must be supplied together.");
+    }
+
+    private static async Task<bool> HasSearchIndexAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'browse_search');";
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+            CultureInfo.InvariantCulture) != 0;
+    }
+
+    private static string FtsLiteral(string value)
+        => "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 
     private static void ValidateResourcePage(
         DateTimeOffset? afterCreatedAt,

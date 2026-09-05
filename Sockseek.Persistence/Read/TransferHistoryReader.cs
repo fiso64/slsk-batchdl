@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using System.Text;
+using System.Text.Json;
+using Sockseek.Core.Snapshots;
 
 namespace Sockseek.Persistence.Read;
 
@@ -22,7 +24,14 @@ public sealed record PersistedTransfer(
     string FailureReason,
     string? FailureMessage,
     string CancellationSource,
-    long Revision);
+    long Revision,
+    DateTimeOffset? StartedAtUtc = null,
+    DateTimeOffset? LastProgressAtUtc = null,
+    long? BytesPerSecond = null,
+    TransferFileMetadataSnapshot? File = null,
+    string? GroupRef = null,
+    string? GroupDisplayPath = null,
+    DateTimeOffset? ArchivedAtUtc = null);
 
 public sealed record PersistedTransferAttempt(
     Guid Id,
@@ -51,20 +60,42 @@ public sealed record TransferHistoryQuery(
     string? TerminalOutcome = null,
     string? Username = null,
     DateTimeOffset? FromUtc = null,
-    DateTimeOffset? ToUtc = null);
+    DateTimeOffset? ToUtc = null,
+    bool Archived = false);
 public sealed record PersistedTransferPage(IReadOnlyList<PersistedTransfer> Items, string? NextCursor);
 public sealed record PersistedTransferAttemptPage(IReadOnlyList<PersistedTransferAttempt> Items, int? NextAttemptNumber);
+public sealed record TransferArchiveFilter(
+    Guid? TransferId = null,
+    string? Direction = null,
+    string? TerminalOutcome = null,
+    string? Username = null,
+    DateTimeOffset? FromUtc = null,
+    DateTimeOffset? ToUtc = null);
+public sealed record TransferArchiveResult(
+    int ResolvedCount,
+    int ChangedCount,
+    int NoOpCount,
+    int RejectedCount,
+    IReadOnlyDictionary<string, int> Reasons);
 
 public interface ITransferHistoryReader
 {
     Task<PersistedTransferPage> GetTransfersAsync(TransferHistoryQuery query, CancellationToken cancellationToken = default);
     Task<PersistedTransferDetail?> GetTransferAsync(Guid transferId, CancellationToken cancellationToken = default);
     Task<PersistedTransferAttemptPage?> GetAttemptsAsync(Guid transferId, int afterAttemptNumber, int limit, CancellationToken cancellationToken = default);
+    Task<TransferArchiveResult> SetArchivedAsync(
+        TransferArchiveFilter filter,
+        bool archived,
+        CancellationToken cancellationToken = default);
 }
 
-public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> contextFactory) : ITransferHistoryReader
+public sealed class TransferHistoryReader(
+    IDbContextFactory<SockseekDbContext> contextFactory,
+    Persistence.Write.PersistenceInbox? inbox = null,
+    TimeProvider? timeProvider = null) : ITransferHistoryReader
 {
     public const int MaximumPageSize = 200;
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
 
     public async Task<PersistedTransferPage> GetTransfersAsync(TransferHistoryQuery query, CancellationToken cancellationToken = default)
     {
@@ -73,12 +104,15 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
         var cursor = DecodeCursor(query.Cursor);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var transfers = context.Transfers.AsNoTracking().AsQueryable();
+        transfers = transfers.Where(row => query.Archived
+            ? row.ArchivedAtUtc != null
+            : row.ArchivedAtUtc == null);
         if (query.JobId.HasValue) transfers = transfers.Where(row => row.JobId == query.JobId);
         if (query.WorkflowId.HasValue) transfers = transfers.Where(row => row.WorkflowId == query.WorkflowId);
-        if (query.Direction != null) transfers = transfers.Where(row => row.Direction == query.Direction);
-        if (query.Source != null) transfers = transfers.Where(row => row.Source == query.Source);
-        if (query.State != null) transfers = transfers.Where(row => row.State == query.State);
-        if (query.TerminalOutcome != null) transfers = transfers.Where(row => row.TerminalOutcome == query.TerminalOutcome);
+        if (query.Direction != null) transfers = transfers.Where(row => EF.Functions.Collate(row.Direction, "NOCASE") == query.Direction);
+        if (query.Source != null) transfers = transfers.Where(row => EF.Functions.Collate(row.Source, "NOCASE") == query.Source);
+        if (query.State != null) transfers = transfers.Where(row => EF.Functions.Collate(row.State, "NOCASE") == query.State);
+        if (query.TerminalOutcome != null) transfers = transfers.Where(row => EF.Functions.Collate(row.TerminalOutcome, "NOCASE") == query.TerminalOutcome);
         if (query.Username != null) transfers = transfers.Where(row => row.Username == query.Username);
         if (query.FromUtc.HasValue)
         {
@@ -91,9 +125,9 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
             transfers = transfers.Where(row => row.CreatedAtUtc <= to);
         }
         if (cursor.HasValue)
-            transfers = transfers.Where(row => row.CreatedAtUtc > cursor.Value.CreatedAtUtc
-                || row.CreatedAtUtc == cursor.Value.CreatedAtUtc && row.Id.CompareTo(cursor.Value.Id) > 0);
-        var rows = await transfers.OrderBy(row => row.CreatedAtUtc).ThenBy(row => row.Id)
+            transfers = transfers.Where(row => row.CreatedAtUtc < cursor.Value.CreatedAtUtc
+                || row.CreatedAtUtc == cursor.Value.CreatedAtUtc && row.Id.CompareTo(cursor.Value.Id) < 0);
+        var rows = await transfers.OrderByDescending(row => row.CreatedAtUtc).ThenByDescending(row => row.Id)
             .Take(query.Limit + 1).ToListAsync(cancellationToken).ConfigureAwait(false);
         bool hasMore = rows.Count > query.Limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);
@@ -105,6 +139,7 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
     public async Task<PersistedTransferDetail?> GetTransferAsync(Guid transferId, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var transfer = await context.Transfers.AsNoTracking()
             .SingleOrDefaultAsync(row => row.Id == transferId, cancellationToken)
             .ConfigureAwait(false);
@@ -116,9 +151,11 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return new PersistedTransferDetail(
+        var detail = new PersistedTransferDetail(
             MapTransfer(transfer),
             latestAttempt == null ? null : MapAttempt(latestAttempt));
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return detail;
     }
 
     public async Task<PersistedTransferAttemptPage?> GetAttemptsAsync(
@@ -130,6 +167,7 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
         if (afterAttemptNumber < 0) throw new ArgumentOutOfRangeException(nameof(afterAttemptNumber));
         if (limit is < 1 or > MaximumPageSize) throw new ArgumentOutOfRangeException(nameof(limit));
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         if (!await context.Transfers.AsNoTracking().AnyAsync(row => row.Id == transferId, cancellationToken).ConfigureAwait(false))
             return null;
         var rows = await context.TransferAttempts.AsNoTracking()
@@ -138,9 +176,92 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         bool hasMore = rows.Count > limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);
-        return new PersistedTransferAttemptPage(
+        var page = new PersistedTransferAttemptPage(
             rows.Select(MapAttempt).ToArray(),
             hasMore && rows.Count > 0 ? rows[^1].AttemptNumber : null);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return page;
+    }
+
+    public async Task<TransferArchiveResult> SetArchivedAsync(
+        TransferArchiveFilter filter,
+        bool archived,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        if (inbox is null)
+            throw new NotSupportedException("Transfer archive requires the daemon persistence writer.");
+
+        var command = new Persistence.Write.AwaitablePersistenceCommand<TransferArchiveResult>(
+            async (context, ct) =>
+            {
+                IQueryable<Entities.TransferEntity> matching = ApplyArchiveFilter(
+                    context.Transfers,
+                    filter);
+                int resolved = await matching.CountAsync(ct).ConfigureAwait(false);
+                if (resolved == 0)
+                {
+                    return filter.TransferId.HasValue
+                        ? new(0, 0, 0, 1, new Dictionary<string, int>
+                        {
+                            ["not-found"] = 1,
+                        })
+                        : new(0, 0, 0, 0, new Dictionary<string, int>());
+                }
+
+                int rejected = archived
+                    ? await matching.CountAsync(
+                        transfer => transfer.TerminalOutcome == "None",
+                        ct).ConfigureAwait(false)
+                    : 0;
+                IQueryable<Entities.TransferEntity> terminal = matching
+                    .Where(transfer => transfer.TerminalOutcome != "None");
+                IQueryable<Entities.TransferEntity> changes = archived
+                    ? terminal.Where(transfer => transfer.ArchivedAtUtc == null)
+                    : terminal.Where(transfer => transfer.ArchivedAtUtc != null);
+                long? archiveTime = archived
+                    ? clock.GetUtcNow().ToUnixTimeMilliseconds()
+                    : null;
+                int changed = await changes.ExecuteUpdateAsync(
+                    setters => setters.SetProperty(
+                        transfer => transfer.ArchivedAtUtc,
+                        archiveTime),
+                    ct).ConfigureAwait(false);
+                int noOp = resolved - rejected - changed;
+                var reasons = new Dictionary<string, int>(StringComparer.Ordinal);
+                if (rejected > 0)
+                    reasons["nonterminal"] = rejected;
+                if (noOp > 0)
+                    reasons[archived ? "already-archived" : "already-restored"] = noOp;
+                return new(resolved, changed, noOp, rejected, reasons);
+            });
+        await inbox.EnqueueCommandAsync(command, cancellationToken).ConfigureAwait(false);
+        return await command.Task.ConfigureAwait(false);
+    }
+
+    private static IQueryable<Entities.TransferEntity> ApplyArchiveFilter(
+        IQueryable<Entities.TransferEntity> transfers,
+        TransferArchiveFilter filter)
+    {
+        if (filter.TransferId.HasValue)
+            transfers = transfers.Where(row => row.Id == filter.TransferId.Value);
+        if (filter.Direction is not null)
+            transfers = transfers.Where(row => EF.Functions.Collate(row.Direction, "NOCASE") == filter.Direction);
+        if (filter.TerminalOutcome is not null)
+            transfers = transfers.Where(row => EF.Functions.Collate(row.TerminalOutcome, "NOCASE") == filter.TerminalOutcome);
+        if (filter.Username is not null)
+            transfers = transfers.Where(row => row.Username == filter.Username);
+        if (filter.FromUtc.HasValue)
+        {
+            long from = filter.FromUtc.Value.ToUniversalTime().ToUnixTimeMilliseconds();
+            transfers = transfers.Where(row => row.CreatedAtUtc >= from);
+        }
+        if (filter.ToUtc.HasValue)
+        {
+            long to = filter.ToUtc.Value.ToUniversalTime().ToUnixTimeMilliseconds();
+            transfers = transfers.Where(row => row.CreatedAtUtc <= to);
+        }
+        return transfers;
     }
 
     private static PersistedTransfer MapTransfer(Entities.TransferEntity transfer)
@@ -150,7 +271,33 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
             transfer.TotalBytes == long.MaxValue ? null : transfer.TotalBytes,
             transfer.TransferredBytes, transfer.AttemptCount,
             DateTimeOffset.FromUnixTimeMilliseconds(transfer.CreatedAtUtc), FromUnix(transfer.CompletedAtUtc),
-            transfer.FailureReason, transfer.FailureMessage, transfer.CancellationSource, transfer.Revision);
+            transfer.FailureReason, transfer.FailureMessage, transfer.CancellationSource, transfer.Revision,
+            FromUnix(transfer.StartedAtUtc),
+            FromUnix(transfer.LastProgressAtUtc),
+            transfer.BytesPerSecond,
+            MapFile(transfer),
+            transfer.GroupRef,
+            transfer.GroupDisplayPath,
+            FromUnix(transfer.ArchivedAtUtc));
+
+    private static TransferFileMetadataSnapshot? MapFile(
+        Entities.TransferEntity transfer)
+    {
+        if (transfer.FileName is null || transfer.FileSizeBytes is null)
+            return null;
+        IReadOnlyList<FileAttributeSnapshot>? attributes = transfer.FileAttributesJson is null
+            ? null
+            : JsonSerializer.Deserialize<FileAttributeSnapshot[]>(transfer.FileAttributesJson);
+        return new TransferFileMetadataSnapshot(
+            transfer.FileName,
+            transfer.FileSizeBytes.Value,
+            transfer.FileExtension,
+            transfer.FileBitRate,
+            transfer.FileBitDepth,
+            transfer.FileSampleRate,
+            transfer.FileLength,
+            attributes);
+    }
 
     private static PersistedTransferAttempt MapAttempt(Entities.TransferAttemptEntity attempt)
         => new(
@@ -159,10 +306,10 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
             DateTimeOffset.FromUnixTimeMilliseconds(attempt.StartedAtUtc), FromUnix(attempt.CompletedAtUtc),
             attempt.FailureReason, attempt.FailureMessage, attempt.Revision);
 
-    private static string EncodeCursor(long createdAtUtc, Guid id)
+    public static string EncodeCursor(long createdAtUtc, Guid id)
         => Convert.ToBase64String(Encoding.UTF8.GetBytes($"{createdAtUtc}:{id:N}"));
 
-    private static (long CreatedAtUtc, Guid Id)? DecodeCursor(string? cursor)
+    public static TransferCursorValue? DecodeCursor(string? cursor)
     {
         if (cursor is null) return null;
         if (cursor.Length > 128)
@@ -176,7 +323,7 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
                 || !long.TryParse(decoded[..separator], System.Globalization.CultureInfo.InvariantCulture, out long created)
                 || !Guid.TryParseExact(decoded[(separator + 1)..], "N", out Guid id))
                 throw new FormatException();
-            return (created, id);
+            return new TransferCursorValue(created, id);
         }
         catch (Exception ex) when (ex is FormatException or ArgumentException)
         {
@@ -186,4 +333,6 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
 
     private static DateTimeOffset? FromUnix(long? value)
         => value.HasValue ? DateTimeOffset.FromUnixTimeMilliseconds(value.Value) : null;
+
+    public readonly record struct TransferCursorValue(long CreatedAtUtc, Guid Id);
 }

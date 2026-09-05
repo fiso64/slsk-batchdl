@@ -1,7 +1,10 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Sockseek.Persistence.Entities;
+using Sockseek.Core.Planning;
+using Sockseek.Core.Models;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace Sockseek.Persistence.Write;
 
@@ -14,6 +17,7 @@ public sealed class PersistenceWriter(
     IPersistenceMutationObserver? mutationObserver = null)
 {
     private const int MaximumConsecutiveCommands = 16;
+    internal const long AccountingBucketMilliseconds = 5 * 60 * 1000;
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
 
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -95,11 +99,12 @@ public sealed class PersistenceWriter(
 
     private bool IsDrained()
         => inbox.IsCompleted
+            && inbox.ActiveAdmissionCount == 0
             && inbox.CriticalDepth == 0
             && inbox.OrdinaryDepth == 0
             && inbox.ProgressCount == 0
             && inbox.DegradedCount == 0
-            && inbox.BufferedSearchResultCount == 0;
+            && inbox.SearchDepth == 0;
 
     private async Task WriteCommandAsync(
         AwaitablePersistenceCommand command,
@@ -224,7 +229,6 @@ public sealed class PersistenceWriter(
             SearchResultsPersistenceMutation results => await ApplySearchResultsAsync(context, results, cancellationToken).ConfigureAwait(false),
             SearchCompletionPersistenceMutation completion => await ApplySearchCompletionAsync(context, completion, cancellationToken).ConfigureAwait(false),
             SearchIncompletePersistenceMutation incomplete => await ApplySearchIncompleteAsync(context, incomplete, cancellationToken).ConfigureAwait(false),
-            SearchTerminalPersistenceMutation terminalSearch => await ApplySearchTerminalAsync(context, terminalSearch, cancellationToken).ConfigureAwait(false),
             TransferTerminalPersistenceMutation terminal => await ApplyTransferTerminalAsync(context, terminal, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Unsupported persistence mutation type {mutation.GetType().FullName}."),
         };
@@ -236,18 +240,45 @@ public sealed class PersistenceWriter(
             return 0;
 
         long occurredAt = mutation.OccurredAtUnixMilliseconds;
+        if (mutation.SubmissionId is Guid submissionId
+            && !string.IsNullOrWhiteSpace(mutation.SubmissionSpecificationJson))
+        {
+            var submission = await context.Submissions.FindAsync(
+                [submissionId],
+                cancellationToken).ConfigureAwait(false);
+            if (submission == null)
+            {
+                submission = new SubmissionEntity
+                {
+                    Id = submissionId,
+                    SubmittedAtUtc = (mutation.RegisteredAtUtc ?? mutation.OccurredAtUtc)
+                        .ToUniversalTime().ToUnixTimeMilliseconds(),
+                    SpecificationSchemaVersion = SubmissionSpecification.CurrentSchemaVersion,
+                    SpecificationJson = mutation.SubmissionSpecificationJson,
+                    RerunOfSubmissionId = mutation.RerunOfSubmissionId,
+                    PreviewId = mutation.PreviewId,
+                    ArtifactId = mutation.ArtifactId,
+                    Revision = 1,
+                };
+                context.Submissions.Add(submission);
+            }
+        }
         if (entity == null)
         {
             entity = new JobEntity
             {
                 Id = mutation.JobId,
-                CreatedAtUtc = occurredAt,
-                StartedAtUtc = mutation.LifecycleState == "Pending" ? null : occurredAt,
+                CreatedAtUtc = (mutation.RegisteredAtUtc ?? mutation.OccurredAtUtc)
+                    .ToUniversalTime().ToUnixTimeMilliseconds(),
+                StartedAtUtc = mutation.StartedAtUtc?.ToUniversalTime().ToUnixTimeMilliseconds()
+                    ?? (mutation.LifecycleState == "Pending" ? null : occurredAt),
             };
             context.Jobs.Add(entity);
         }
 
         entity.WorkflowId = mutation.WorkflowId;
+        entity.SubmissionId = mutation.SubmissionId;
+        entity.SemanticRole = mutation.SemanticRole;
         entity.ParentJobId = mutation.ParentJobId;
         entity.SourceJobId = mutation.SourceJobId;
         entity.ResultJobId = mutation.ResultJobId;
@@ -268,7 +299,8 @@ public sealed class PersistenceWriter(
         entity.QueryText = mutation.QueryText;
         entity.UpdatedAtUtc = Math.Max(entity.UpdatedAtUtc, occurredAt);
         if (entity.StartedAtUtc == null && mutation.LifecycleState != "Pending")
-            entity.StartedAtUtc = occurredAt;
+            entity.StartedAtUtc = mutation.StartedAtUtc?.ToUniversalTime().ToUnixTimeMilliseconds()
+                ?? occurredAt;
         if (mutation.LifecycleState == "Terminal" && entity.CompletedAtUtc == null)
             entity.CompletedAtUtc = occurredAt;
         entity.Revision = mutation.Revision;
@@ -290,14 +322,26 @@ public sealed class PersistenceWriter(
 
     private async Task<int> ApplyTransferAsync(SockseekDbContext context, TransferPersistenceMutation mutation, CancellationToken cancellationToken)
     {
+        int accountingRows = await ApplyAccountingAsync(
+            context,
+            mutation.TransferId,
+            mutation.Direction,
+            mutation.Username,
+            mutation.AccountingObservations,
+            cancellationToken).ConfigureAwait(false);
         var entity = await context.Transfers.FindAsync([mutation.TransferId], cancellationToken).ConfigureAwait(false);
         if (entity != null && (entity.Revision >= mutation.Revision || entity.TerminalOutcome != "None" && mutation.TerminalOutcome == "None"))
-            return 0;
+            return accountingRows;
 
         long occurredAt = mutation.OccurredAtUnixMilliseconds;
         if (entity == null)
         {
-            entity = new TransferEntity { Id = mutation.TransferId, CreatedAtUtc = occurredAt };
+            entity = new TransferEntity
+            {
+                Id = mutation.TransferId,
+                CreatedAtUtc = mutation.RequestedAtUtc?.ToUniversalTime().ToUnixTimeMilliseconds()
+                    ?? occurredAt,
+            };
             context.Transfers.Add(entity);
         }
 
@@ -320,26 +364,64 @@ public sealed class PersistenceWriter(
         // Admission alone is not an attempt. A queued transfer may terminalize
         // without ever starting (for example, user or daemon cancellation), in
         // which case started_at must remain null.
-        if (entity.StartedAtUtc == null && mutation.AttemptCount > 0)
+        if (entity.StartedAtUtc == null && mutation.StartedAtUtc is { } startedAt)
+        {
+            entity.StartedAtUtc = startedAt.ToUniversalTime().ToUnixTimeMilliseconds();
+        }
+        else if (entity.StartedAtUtc == null && mutation.AttemptCount > 0)
         {
             entity.StartedAtUtc = occurredAt;
         }
-        if (mutation.Priority == PersistenceMutationPriority.Progress)
+        if (mutation.LastProgressAtUtc is { } progressAt)
+        {
+            entity.LastProgressAtUtc = Math.Max(
+                entity.LastProgressAtUtc ?? 0,
+                progressAt.ToUniversalTime().ToUnixTimeMilliseconds());
+        }
+        else if (mutation.Priority == PersistenceMutationPriority.Progress)
+        {
             entity.LastProgressAtUtc = Math.Max(entity.LastProgressAtUtc ?? 0, occurredAt);
+        }
+        if (mutation.BytesPerSecond.HasValue)
+            entity.BytesPerSecond = Math.Max(0, mutation.BytesPerSecond.Value);
         if (mutation.TerminalOutcome != "None")
             entity.CompletedAtUtc ??= occurredAt;
         entity.FailureReason = mutation.FailureReason;
         entity.FailureMessage = Limit(mutation.FailureMessage);
         entity.CancellationSource = mutation.CancellationSource;
+        if (mutation.File is { } file)
+        {
+            entity.FileName = Limit(file.Name, 1024);
+            entity.FileSizeBytes = Math.Max(0, file.Size);
+            entity.FileExtension = Limit(file.Extension, 32);
+            entity.FileBitRate = file.BitRate;
+            entity.FileBitDepth = file.BitDepth;
+            entity.FileSampleRate = file.SampleRate;
+            entity.FileLength = file.Length;
+            entity.FileAttributesJson = file.Attributes is null
+                ? null
+                : JsonSerializer.Serialize(file.Attributes);
+        }
+        if (mutation.GroupRef is not null)
+            entity.GroupRef = Limit(mutation.GroupRef, 4096);
+        if (mutation.GroupDisplayPath is not null)
+            entity.GroupDisplayPath = Limit(mutation.GroupDisplayPath, 4096);
         entity.Revision = mutation.Revision;
-        return 1;
+        return accountingRows + 1;
     }
 
     private async Task<int> ApplyAttemptAsync(SockseekDbContext context, TransferAttemptPersistenceMutation mutation, CancellationToken cancellationToken)
     {
+        int accountingRows = await ApplyAccountingAsync(
+            context,
+            mutation.TransferId,
+            mutation.Direction,
+            mutation.SourceUsername,
+            mutation.AccountingObservations,
+            cancellationToken).ConfigureAwait(false);
         var entity = await context.TransferAttempts.FindAsync([mutation.AttemptId], cancellationToken).ConfigureAwait(false);
         if (entity != null && entity.Revision >= mutation.Revision)
-            return 0;
+            return accountingRows;
 
         long occurredAt = mutation.OccurredAtUnixMilliseconds;
         if (entity == null)
@@ -348,7 +430,8 @@ public sealed class PersistenceWriter(
             {
                 Id = mutation.AttemptId,
                 TransferId = mutation.TransferId,
-                StartedAtUtc = occurredAt,
+                StartedAtUtc = mutation.StartedAtUtc?.ToUniversalTime().ToUnixTimeMilliseconds()
+                    ?? occurredAt,
             };
             context.TransferAttempts.Add(entity);
         }
@@ -366,7 +449,99 @@ public sealed class PersistenceWriter(
         entity.FailureReason = mutation.FailureReason;
         entity.FailureMessage = Limit(mutation.FailureMessage);
         entity.Revision = mutation.Revision;
-        return 1;
+        return accountingRows + 1;
+    }
+
+    private static async Task<int> ApplyAccountingAsync(
+        SockseekDbContext context,
+        Guid transferId,
+        string direction,
+        string? username,
+        IReadOnlyList<TransferAccountingObservation>? observations,
+        CancellationToken cancellationToken)
+    {
+        if (observations is not { Count: > 0 })
+            return 0;
+
+        int changed = 0;
+        string peer = username ?? "";
+        foreach (TransferAccountingObservation observation in observations
+            .OrderBy(item => item.OccurredAtUtc)
+            .ThenBy(item => item.Revision))
+        {
+            var checkpoint = await context.TransferAccountingCheckpoints.FindAsync(
+                [observation.AttemptId],
+                cancellationToken).ConfigureAwait(false);
+            if (checkpoint is not null && checkpoint.Revision >= observation.Revision)
+                continue;
+
+            long cumulative = Math.Max(0, observation.CumulativeBytes);
+            long delta = checkpoint is null
+                ? cumulative
+                : cumulative >= checkpoint.CumulativeBytes
+                    ? cumulative - checkpoint.CumulativeBytes
+                    : cumulative;
+            long observedAt = observation.OccurredAtUtc.ToUniversalTime().ToUnixTimeMilliseconds();
+            if (checkpoint is null)
+            {
+                checkpoint = new TransferAccountingCheckpointEntity
+                {
+                    AttemptId = observation.AttemptId,
+                    TransferId = transferId,
+                };
+                context.TransferAccountingCheckpoints.Add(checkpoint);
+                changed++;
+            }
+            checkpoint.Revision = observation.Revision;
+            checkpoint.CumulativeBytes = cumulative;
+            checkpoint.LastObservedAtUtc = observedAt;
+
+            if (delta <= 0)
+                continue;
+            Math.DivRem(observedAt, AccountingBucketMilliseconds, out long remainder);
+            long bucketStart = observedAt - remainder;
+            var bucket = await context.TransferByteBuckets.FindAsync(
+                [bucketStart, direction, peer],
+                cancellationToken).ConfigureAwait(false);
+            if (bucket is null)
+            {
+                context.TransferByteBuckets.Add(new TransferByteBucketEntity
+                {
+                    BucketStartUtc = bucketStart,
+                    Direction = direction,
+                    Username = peer,
+                    Bytes = delta,
+                });
+                changed++;
+            }
+            else
+            {
+                bucket.Bytes = checked(bucket.Bytes + delta);
+                changed++;
+            }
+        }
+
+        var state = await context.TransferAccountingStates.FindAsync(
+            [1],
+            cancellationToken).ConfigureAwait(false);
+        if (state is null)
+        {
+            long first = observations.Min(item => item.OccurredAtUtc.ToUniversalTime().ToUnixTimeMilliseconds());
+            context.TransferAccountingStates.Add(new TransferAccountingStateEntity
+            {
+                Id = 1,
+                CompleteFromUtc = first,
+                UpdatedAtUtc = observations.Max(item => item.OccurredAtUtc.ToUniversalTime().ToUnixTimeMilliseconds()),
+            });
+            changed++;
+        }
+        else
+        {
+            state.UpdatedAtUtc = Math.Max(
+                state.UpdatedAtUtc,
+                observations.Max(item => item.OccurredAtUtc.ToUniversalTime().ToUnixTimeMilliseconds()));
+        }
+        return changed;
     }
 
     private async Task<int> ApplySearchResultsAsync(SockseekDbContext context, SearchResultsPersistenceMutation mutation, CancellationToken cancellationToken)
@@ -378,11 +553,14 @@ public sealed class PersistenceWriter(
         var sequences = mutation.Results.Select(result => result.Sequence).Distinct().ToArray();
         var usernames = mutation.Results.Select(result => result.Username).Distinct().ToArray();
         var remoteFilenames = mutation.Results.Select(result => result.RemoteFilename).Distinct().ToArray();
+        var visibilities = mutation.Results.Select(result => result.Visibility).Distinct().ToArray();
         var existingRows = await context.SearchResults
             .Where(row => row.SearchJobId == mutation.SearchJobId
                 && (sequences.Contains(row.Sequence)
-                    || usernames.Contains(row.Username) && remoteFilenames.Contains(row.RemoteFilename)))
-            .Select(row => new { row.Sequence, row.Username, row.RemoteFilename })
+                    || usernames.Contains(row.Username)
+                        && remoteFilenames.Contains(row.RemoteFilename)
+                        && visibilities.Contains(row.Visibility)))
+            .Select(row => new { row.Sequence, row.Username, row.RemoteFilename, row.Visibility })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
         var seenSequences = existingRows.Select(row => row.Sequence)
@@ -391,17 +569,19 @@ public sealed class PersistenceWriter(
                 .Select(row => row.Sequence))
             .ToHashSet();
         var seenCandidates = existingRows
-            .Select(row => (row.Username, row.RemoteFilename))
+            .Select(row => (row.Username, row.RemoteFilename, row.Visibility))
             .Concat(context.SearchResults.Local
                 .Where(row => row.SearchJobId == mutation.SearchJobId)
-                .Select(row => (row.Username, row.RemoteFilename)))
+                .Select(row => (row.Username, row.RemoteFilename, row.Visibility)))
             .ToHashSet();
 
         int added = 0;
+        int publicAdded = 0;
+        int lockedAdded = 0;
         foreach (var result in mutation.Results)
         {
             if (!seenSequences.Add(result.Sequence)
-                || !seenCandidates.Add((result.Username, result.RemoteFilename)))
+                || !seenCandidates.Add((result.Username, result.RemoteFilename, result.Visibility)))
                 continue;
 
             context.SearchResults.Add(new SearchResultEntity
@@ -421,12 +601,19 @@ public sealed class PersistenceWriter(
                 Extension = result.Extension,
                 UploadSpeed = result.UploadSpeed,
                 HasFreeUploadSlot = result.HasFreeUploadSlot,
+                QueueLength = result.QueueLength,
+                Visibility = result.Visibility,
                 AttributesJson = result.AttributesJson,
                 ObservedAtUtc = result.ObservedAtUtc.ToUniversalTime().ToUnixTimeMilliseconds(),
             });
             added++;
+            if (result.Visibility == SearchResultVisibility.Locked.ToString())
+                lockedAdded++;
+            else
+                publicAdded++;
         }
-        search.ResultCount = checked(search.ResultCount + added);
+        search.ResultCount = checked(search.ResultCount + publicAdded);
+        search.LockedFileCount = checked(search.LockedFileCount + lockedAdded);
         search.Revision = Math.Max(search.Revision, mutation.Revision);
         if (search.ResultPersistenceState == "NotPersisted")
             search.ResultPersistenceState = "Incomplete";
@@ -447,6 +634,7 @@ public sealed class PersistenceWriter(
         search.Revision = mutation.Revision;
         search.ResultCount = mutation.ResultCount;
         search.LockedFileCount = mutation.LockedFileCount;
+        search.ObservedPeerCount = mutation.ObservedPeerCount;
         search.IsComplete = true;
         search.CompletedAtUtc ??= mutation.OccurredAtUnixMilliseconds;
         search.ResultPersistenceState = mutation.ResultPersistenceState;
@@ -471,26 +659,6 @@ public sealed class PersistenceWriter(
         rows += await ApplyTransferAsync(context, mutation.Transfer, cancellationToken).ConfigureAwait(false);
         if (mutation.FinalAttempt != null)
             rows += await ApplyAttemptAsync(context, mutation.FinalAttempt, cancellationToken).ConfigureAwait(false);
-        return rows;
-    }
-
-    private async Task<int> ApplySearchTerminalAsync(SockseekDbContext context, SearchTerminalPersistenceMutation mutation, CancellationToken cancellationToken)
-    {
-        int rows = 0;
-        if (mutation.PendingResultBatches.Count > 0)
-        {
-            SearchResultsPersistenceMutation[] ordered = mutation.PendingResultBatches
-                .OrderBy(batch => batch.Sequence)
-                .ToArray();
-            SearchResultsPersistenceMutation last = ordered[^1];
-            var combined = last with
-            {
-                Revision = ordered.Max(batch => batch.Revision),
-                Results = ordered.SelectMany(batch => batch.Results).ToArray(),
-            };
-            rows += await ApplySearchResultsAsync(context, combined, cancellationToken).ConfigureAwait(false);
-        }
-        rows += await ApplySearchCompletionAsync(context, mutation.Completion, cancellationToken).ConfigureAwait(false);
         return rows;
     }
 
@@ -520,6 +688,11 @@ public sealed class PersistenceWriter(
         => value == null || value.Length <= options.MaximumFailureTextLength
             ? value
             : value[..options.MaximumFailureTextLength];
+
+    private static string? Limit(string? value, int maximumLength)
+        => value == null || value.Length <= maximumLength
+            ? value
+            : value[..maximumLength];
 
     private static bool IsBusy(Exception exception)
         => exception is SqliteException { SqliteErrorCode: 5 or 6 }
@@ -565,14 +738,54 @@ public sealed class PersistenceWriter(
                 continue;
             }
 
-            if (!coalesced.TryGetValue(key, out var current)
-                || mutation.Revision > current.Revision
+            if (!coalesced.TryGetValue(key, out var current))
+            {
+                coalesced[key] = mutation;
+                continue;
+            }
+
+            if (key.StartsWith("transfer:", StringComparison.Ordinal))
+            {
+                coalesced[key] = MergeTransferMutations(current, mutation);
+                continue;
+            }
+
+            if (mutation.Revision > current.Revision
                 || mutation.Revision == current.Revision && mutation.Priority > current.Priority)
                 coalesced[key] = mutation;
         }
 
         appendOnly.AddRange(coalesced.Values);
         return appendOnly;
+    }
+
+    private static PersistenceMutation MergeTransferMutations(
+        PersistenceMutation first,
+        PersistenceMutation second)
+    {
+        TransferPersistenceMutation firstTransfer = first switch
+        {
+            TransferPersistenceMutation transfer => transfer,
+            TransferTerminalPersistenceMutation terminal => terminal.Transfer,
+            _ => throw new InvalidOperationException("Expected a transfer mutation."),
+        };
+        TransferPersistenceMutation secondTransfer = second switch
+        {
+            TransferPersistenceMutation transfer => transfer,
+            TransferTerminalPersistenceMutation terminal => terminal.Transfer,
+            _ => throw new InvalidOperationException("Expected a transfer mutation."),
+        };
+        bool secondWins = secondTransfer.Revision > firstTransfer.Revision
+            || secondTransfer.Revision == firstTransfer.Revision
+                && secondTransfer.Priority >= firstTransfer.Priority;
+        TransferPersistenceMutation merged = secondWins
+            ? PersistenceInbox.MergeTransfer(firstTransfer, secondTransfer)
+            : PersistenceInbox.MergeTransfer(secondTransfer, firstTransfer);
+        TransferTerminalPersistenceMutation? terminalMutation = second as TransferTerminalPersistenceMutation
+            ?? first as TransferTerminalPersistenceMutation;
+        return terminalMutation is null
+            ? merged
+            : terminalMutation with { Transfer = merged };
     }
 
     private static int DependencyOrder(PersistenceMutation mutation)
@@ -584,7 +797,6 @@ public sealed class PersistenceWriter(
             TransferAttemptPersistenceMutation => 2,
             SearchResultsPersistenceMutation => 3,
             SearchIncompletePersistenceMutation => 4,
-            SearchTerminalPersistenceMutation => 5,
             SearchCompletionPersistenceMutation => 5,
             _ => 6,
         };

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Sockseek.Core.Diagnostics;
 using Sockseek.Core.IO;
 using Sockseek.Core.Sharing;
+using Sockseek.Core.Snapshots;
 using Soulseek;
 
 namespace Sockseek.Core.Transfers.Uploads;
@@ -70,7 +71,10 @@ public sealed record UploadTransferSnapshot(
     double BytesPerSecond,
     DateTimeOffset? LastProgressAtUtc,
     UploadAttemptSnapshot? Attempt,
-    DateTimeOffset? FinishedAtUtc);
+    DateTimeOffset? FinishedAtUtc,
+    TransferFileMetadataSnapshot? File = null,
+    string? GroupRef = null,
+    string? GroupDisplayPath = null);
 
 public sealed record UploadCoordinatorAdmission(
     UploadAdmissionResultKind Kind,
@@ -150,7 +154,7 @@ public sealed class UploadCoordinator : IAsyncDisposable
     private readonly object sync = new();
     private readonly IShareCatalogProvider catalogs;
     private readonly IUploadProtocolInvoker protocol;
-    private readonly PeerAccessPolicy accessPolicy;
+    private readonly PeerRestrictionPolicy restrictions;
     private readonly UploadScheduler scheduler;
     private readonly TimeSpan shutdownGrace;
     private readonly ILogger<UploadCoordinator> logger;
@@ -161,13 +165,13 @@ public sealed class UploadCoordinator : IAsyncDisposable
     public UploadCoordinator(
         IShareCatalogProvider catalogs,
         Func<ISoulseekClient?> clientProvider,
-        PeerAccessPolicy accessPolicy,
+        PeerRestrictionPolicy restrictions,
         UploadScheduler scheduler,
         ILogger<UploadCoordinator>? logger = null)
         : this(
             catalogs,
             new SoulseekUploadProtocolInvoker(clientProvider),
-            accessPolicy,
+            restrictions,
             scheduler,
             shutdownGrace: null,
             logger)
@@ -177,14 +181,14 @@ public sealed class UploadCoordinator : IAsyncDisposable
     public UploadCoordinator(
         IShareCatalogProvider catalogs,
         IUploadProtocolInvoker protocol,
-        PeerAccessPolicy accessPolicy,
+        PeerRestrictionPolicy restrictions,
         UploadScheduler scheduler,
         TimeSpan? shutdownGrace = null,
         ILogger<UploadCoordinator>? logger = null)
     {
         this.catalogs = catalogs ?? throw new ArgumentNullException(nameof(catalogs));
         this.protocol = protocol ?? throw new ArgumentNullException(nameof(protocol));
-        this.accessPolicy = accessPolicy ?? throw new ArgumentNullException(nameof(accessPolicy));
+        this.restrictions = restrictions ?? throw new ArgumentNullException(nameof(restrictions));
         this.scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
         this.logger = logger ?? NullLogger<UploadCoordinator>.Instance;
         this.shutdownGrace = shutdownGrace ?? TimeSpan.FromSeconds(10);
@@ -213,7 +217,7 @@ public sealed class UploadCoordinator : IAsyncDisposable
             }
 
             string exactUsername = PeerUsername.Validate(username);
-            if (accessPolicy.IsBlocked(exactUsername, endpoint))
+            if (restrictions.IsUploadAccessBlocked(exactUsername, endpoint))
                 return Rejected(UploadAdmissionRejection.Denied, peerHash);
 
             RemotePathKey pathKey;
@@ -248,7 +252,9 @@ public sealed class UploadCoordinator : IAsyncDisposable
             var item = new Work(
                 request,
                 endpoint,
-                resolved.File.ModifiedAtUtc);
+                resolved.File.ModifiedAtUtc,
+                ToTransferFileMetadata(resolved.File),
+                ContainingDirectory(resolved.File.RemotePath));
             UploadAdmissionResult admitted;
             lock (sync)
             {
@@ -328,6 +334,21 @@ public sealed class UploadCoordinator : IAsyncDisposable
             limit,
             previousQueueRevision,
             username);
+
+    public UploadQueuePage GetNewestQueuePage(
+        DateTimeOffset? beforeRequestedAtUtc,
+        Guid? beforeTransferId,
+        int limit,
+        string? username = null,
+        DateTimeOffset? fromUtc = null,
+        DateTimeOffset? toUtc = null)
+        => scheduler.GetNewestPage(
+            beforeRequestedAtUtc,
+            beforeTransferId,
+            limit,
+            username,
+            fromUtc,
+            toUtc);
 
     public UploadTransferSnapshot? GetTransfer(Guid transferId)
     {
@@ -490,7 +511,7 @@ public sealed class UploadCoordinator : IAsyncDisposable
 
         try
         {
-            if (accessPolicy.IsBlocked(item.Request.Username, item.Endpoint))
+            if (restrictions.IsUploadAccessBlocked(item.Request.Username, item.Endpoint))
                 throw new UploadDomainException(UploadFailureReason.Denied);
 
             ShareCatalogResolvedFile? current = await ResolveCurrentAsync(
@@ -747,8 +768,43 @@ public sealed class UploadCoordinator : IAsyncDisposable
                         item.Attempt.FinishedAtUtc,
                         item.Attempt.BytesTransferred,
                         item.Attempt.BytesPerSecond),
-                item.FinishedAtUtc);
+                item.FinishedAtUtc,
+                item.File,
+                item.GroupRef,
+                item.GroupDisplayPath);
         }
+    }
+
+    private static TransferFileMetadataSnapshot ToTransferFileMetadata(
+        ShareCatalogFile file)
+    {
+        int? Attribute(int type)
+            => file.Attributes.FirstOrDefault(attribute => attribute.Type == type)?.Value;
+
+        return new TransferFileMetadataSnapshot(
+            FileName(file.RemotePath),
+            file.SizeBytes,
+            file.Extension,
+            Attribute((int)FileAttributeType.BitRate),
+            Attribute((int)FileAttributeType.BitDepth),
+            Attribute((int)FileAttributeType.SampleRate),
+            Attribute((int)FileAttributeType.Length),
+            file.Attributes.Select(attribute => new FileAttributeSnapshot(
+                ((FileAttributeType)attribute.Type).ToString(),
+                attribute.Value,
+                attribute.Type)).ToArray());
+    }
+
+    private static string FileName(string remotePath)
+    {
+        int separator = Math.Max(remotePath.LastIndexOf('\\'), remotePath.LastIndexOf('/'));
+        return separator < 0 ? remotePath : remotePath[(separator + 1)..];
+    }
+
+    private static string ContainingDirectory(string remotePath)
+    {
+        int separator = Math.Max(remotePath.LastIndexOf('\\'), remotePath.LastIndexOf('/'));
+        return separator < 0 ? "" : remotePath[..separator];
     }
 
     private static bool IsTerminal(UploadTransferState state)
@@ -857,11 +913,16 @@ public sealed class UploadCoordinator : IAsyncDisposable
     private sealed class Work(
         UploadAdmissionRequest request,
         IPEndPoint? endpoint,
-        DateTimeOffset expectedModifiedAtUtc)
+        DateTimeOffset expectedModifiedAtUtc,
+        TransferFileMetadataSnapshot file,
+        string groupRef)
     {
         public UploadAdmissionRequest Request { get; } = request;
         public IPEndPoint? Endpoint { get; } = endpoint;
         public DateTimeOffset ExpectedModifiedAtUtc { get; } = expectedModifiedAtUtc;
+        public TransferFileMetadataSnapshot File { get; } = file;
+        public string GroupRef { get; } = groupRef;
+        public string GroupDisplayPath { get; } = groupRef;
         public CancellationTokenSource Cancellation { get; } = new();
         public UploadTransferState State { get; set; } = UploadTransferState.Queued;
         public UploadFailureReason FailureReason { get; set; }

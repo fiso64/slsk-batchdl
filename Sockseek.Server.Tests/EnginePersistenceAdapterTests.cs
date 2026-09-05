@@ -3,6 +3,7 @@ using Sockseek.Core;
 using Sockseek.Core.Events;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.Services;
 using Sockseek.Persistence.Write;
 using Sockseek.Persistence.Read;
 using Sockseek.Api;
@@ -48,6 +49,46 @@ public sealed class EnginePersistenceAdapterTests
         Assert.AreEqual(source.Id, mutation.SourceJobId);
         Assert.AreEqual(PersistenceMutationPriority.Structural, mutation.Priority);
         Assert.IsFalse(mutation.PayloadJson?.Contains("CancellationToken", StringComparison.Ordinal) == true);
+    }
+
+    [TestMethod]
+    public void HistoricalSummary_MapsRawSearchDiscoveryCounts()
+    {
+        var persisted = new PersistedJob(
+            Guid.NewGuid(),
+            1,
+            Guid.NewGuid(),
+            null,
+            null,
+            null,
+            "Search",
+            "Terminal",
+            "None",
+            null,
+            "Succeeded",
+            "None",
+            "None",
+            "None",
+            null,
+            null,
+            null,
+            "query",
+            DateTimeOffset.UnixEpoch,
+            DateTimeOffset.UnixEpoch,
+            DateTimeOffset.UnixEpoch,
+            1,
+            1,
+            null,
+            DiscoveryPublicFileCount: 7,
+            DiscoveryLockedFileCount: 3,
+            DiscoveryObservedPeerCount: 2);
+
+        JobSummaryDto summary = HistoricalJobDtoMapper.ToSummary(persisted);
+
+        Assert.AreEqual(7, summary.DiscoveryRawResultCount);
+        Assert.AreEqual(7, summary.DiscoveryPublicFileCount);
+        Assert.AreEqual(3, summary.DiscoveryLockedFileCount);
+        Assert.AreEqual(2, summary.DiscoveryObservedPeerCount);
     }
 
     [TestMethod]
@@ -113,15 +154,15 @@ public sealed class EnginePersistenceAdapterTests
             .Single(job => job.DefaultFileProjection != null);
         var trackPayload = (SearchJobPayloadDto)HistoricalJobDtoMapper.ToPayload(
             ToPersistedJob(mutations[trackSearch.Id]));
-        Assert.IsNotNull(trackPayload.DefaultFileProjection);
-        Assert.AreEqual("Track", trackPayload.DefaultFileProjection.SongQuery?.Title);
+        Assert.IsNotNull(trackPayload.SongQuery);
+        Assert.AreEqual("Track", trackPayload.SongQuery.Title);
 
         var albumSearch = jobs.Select(pair => pair.Job).OfType<SearchJob>()
             .Single(job => job.DefaultFolderProjection != null);
         var albumPayload = (SearchJobPayloadDto)HistoricalJobDtoMapper.ToPayload(
             ToPersistedJob(mutations[albumSearch.Id]));
-        Assert.IsNotNull(albumPayload.DefaultFolderProjection);
-        Assert.AreEqual("Album", albumPayload.DefaultFolderProjection.AlbumQuery.Album);
+        Assert.IsNotNull(albumPayload.AlbumQuery);
+        Assert.AreEqual("Album", albumPayload.AlbumQuery.Album);
 
         var songPayload = (SongJobPayloadDto)HistoricalJobDtoMapper.ToPayload(
             ToPersistedJob(mutations[exactSong.Id]));
@@ -159,6 +200,9 @@ public sealed class EnginePersistenceAdapterTests
 
         Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, "C:/downloads/Track.mp3");
         Invoke(events, "RaiseTransferAttemptStarted", transferId, attemptId, 1, song, candidate.Target, "C:/downloads/Track.mp3", "C:/downloads/Track.mp3.incomplete");
+        song.BytesTransferred = 40;
+        Invoke(events, "RaiseDownloadProgress", transferId, song, candidate.Target, "C:/downloads/Track.mp3", 40L, 100L);
+        song.BytesTransferred = 100;
         Invoke(events, "RaiseTransferAttemptCompleted", transferId, attemptId, 1, song, candidate.Target, "C:/downloads/Track.mp3");
         Invoke(events, "RaiseTransferCompleted", transferId, song, candidate.Target, "C:/downloads/Track.mp3", 100L, 1);
 
@@ -172,7 +216,41 @@ public sealed class EnginePersistenceAdapterTests
         Assert.AreEqual(@"Music\Artist\Track.mp3", terminal.FinalAttempt.SourcePath);
         Assert.AreEqual("C:/downloads/Track.mp3", terminal.FinalAttempt.OutputPath);
         Assert.AreEqual(2L, terminal.FinalAttempt.Revision);
+        Assert.AreEqual(100L, terminal.FinalAttempt.AccountingObservations?.Single().CumulativeBytes);
+        Assert.AreEqual(
+            40L,
+            sink.Mutations.OfType<TransferPersistenceMutation>()
+                .Single(mutation => mutation.Priority == PersistenceMutationPriority.Progress)
+                .AccountingObservations?.Single().CumulativeBytes);
         Assert.AreEqual(0, sink.Mutations.OfType<TransferAttemptPersistenceMutation>().Count(mutation => mutation.State == "Completed"));
+    }
+
+    [TestMethod]
+    public async Task DownloadTerminalMutation_OwnsExactHandoffUntilItsRevisionCommits()
+    {
+        var events = new DownloadEvents();
+        var sink = new CapturingSink();
+        var handoffs = new PersistenceHandoffTracker();
+        new EnginePersistenceAdapter(Guid.NewGuid(), sink, handoffs).Attach(events);
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+        var file = new Soulseek.File(1, @"Music\Artist\Track.mp3", 100, ".mp3");
+        var candidate = SoulseekSearchAdapter.ToFileCandidate(
+            new SearchResponse("user", 1, true, 1_000, 0, [file]),
+            file);
+        Guid transferId = Guid.NewGuid();
+
+        Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, "C:/downloads/Track.mp3");
+        Invoke(events, "RaiseTransferCompleted", transferId, song, candidate.Target, "C:/downloads/Track.mp3", 100L, 1);
+        var terminal = sink.Mutations.OfType<TransferTerminalPersistenceMutation>().Single();
+
+        Task handoff = handoffs.WaitForTransferAsync(
+            transferId,
+            terminal.Transfer.Revision,
+            CancellationToken.None);
+        Assert.IsFalse(handoff.IsCompleted);
+
+        handoffs.Committed([terminal]);
+        await handoff;
     }
 
     [TestMethod]

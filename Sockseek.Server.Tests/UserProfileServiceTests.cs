@@ -127,21 +127,15 @@ public sealed class UserProfileServiceTests
     }
 
     [TestMethod]
-    public async Task PolicyAndUsernameValidationRunBeforeSoulseekStartup()
+    public async Task UsernameValidationRunsBeforeSoulseekStartup()
     {
         int startupCalls = 0;
         await using var service = new UserProfileService(
             new DelegateTransport(),
             _ => { startupCalls++; return Task.CompletedTask; },
             () => "account",
-            new PeerAccessPolicy(new PeerAccessSettings
-            {
-                BlockedUsernames = ["blocked"],
-            }),
             NullLogger<UserProfileService>.Instance);
 
-        await Assert.ThrowsExactlyAsync<UserProfileAccessDeniedException>(() =>
-            service.GetAsync("blocked"));
         await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
             service.GetAsync("bad\u0001name"));
         Assert.AreEqual(0, startupCalls);
@@ -190,7 +184,6 @@ public sealed class UserProfileServiceTests
             transport,
             ensureStarted ?? (_ => Task.CompletedTask),
             () => "account",
-            new PeerAccessPolicy(new PeerAccessSettings()),
             logger ?? NullLogger<UserProfileService>.Instance,
             utcNow: utcNow,
             sectionTimeout: sectionTimeout);

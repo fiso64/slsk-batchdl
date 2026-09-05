@@ -38,6 +38,8 @@ public sealed record UserPictureRefDto(
 
 public sealed record UserProfileDto(
     string Username,
+    bool UploadAccessBlocked,
+    bool PrivateMessagesBlocked,
     UserProfilePresence Presence,
     UserProfileSectionDto Status,
     UserProfileSectionDto Info,

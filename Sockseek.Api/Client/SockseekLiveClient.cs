@@ -303,6 +303,22 @@ public sealed class SockseekLiveClient : IAsyncDisposable
         CancellationToken ct = default)
         => _ = await api.CancelTransferAsync(transferId, ct);
 
+    public Task<TransferCommandReceiptDto> CancelTransfersAsync(
+        BulkCancelTransfersRequestDto request,
+        CancellationToken ct = default)
+        => api.CancelTransfersAsync(request, ct);
+
+    public Task<TransferCommandReceiptDto> SetTransferArchivedAsync(
+        Guid transferId,
+        bool archived = true,
+        CancellationToken ct = default)
+        => api.SetTransferArchivedAsync(transferId, archived, ct);
+
+    public Task<TransferCommandReceiptDto> SetTransfersArchivedAsync(
+        ArchiveTransfersRequestDto request,
+        CancellationToken ct = default)
+        => api.SetTransfersArchivedAsync(request, ct);
+
     public Task<LiveTransferPageDto> LoadLiveTransferPageAsync(
         LiveTransferFilter? filter = null,
         string? cursor = null,
@@ -310,12 +326,17 @@ public sealed class SockseekLiveClient : IAsyncDisposable
         CancellationToken ct = default)
         => api.LoadLiveTransferPageAsync(filter, cursor, limit, ct);
 
-    public Task<CursorPage<TransferHistoryDto>> LoadTransferHistoryPageAsync(
+    public Task<TransferTimelinePageDto> LoadTransferHistoryPageAsync(
         TransferHistoryFilter? filter = null,
         string? cursor = null,
         int limit = 100,
         CancellationToken ct = default)
         => api.GetTransfersPageAsync(filter, cursor, limit, ct);
+
+    public Task<DashboardAnalyticsDto> LoadDashboardAnalyticsAsync(
+        string range = "24h",
+        CancellationToken ct = default)
+        => api.GetDashboardAnalyticsAsync(range, ct);
 
     private async Task EnsureConnectedAsync(CancellationToken ct)
     {

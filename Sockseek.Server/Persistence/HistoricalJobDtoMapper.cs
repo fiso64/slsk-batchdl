@@ -1,12 +1,76 @@
 using System.Text.Json;
 using Sockseek.Api;
+using Sockseek.Core.Jobs;
+using Sockseek.Core.Models;
+using Sockseek.Core.Planning;
+using Sockseek.Core.Services;
 using Sockseek.Persistence.Read;
 
 namespace Sockseek.Server.Persistence;
 
 internal static class HistoricalJobDtoMapper
 {
-    public static FileSearchProjectionRequestDto? DefaultFileProjection(PersistedJob job)
+    public static async Task<SearchDefinition> SearchDefinitionAsync(
+        ISubmissionStore? submissions,
+        PersistedJob job,
+        CancellationToken cancellationToken)
+    {
+        SearchDefinition? retainedJobDefinition = SearchDefinitionFromPayload(job);
+        if (job.SubmissionId is Guid submissionId)
+        {
+            if (submissions == null)
+                return retainedJobDefinition ?? throw MissingSearchDefinition(job.Id);
+            PersistedSubmission? submission = await submissions.GetSubmissionAsync(
+                submissionId,
+                cancellationToken).ConfigureAwait(false);
+            if (submission == null)
+                return retainedJobDefinition ?? throw MissingSearchDefinition(job.Id);
+            SubmissionSpecification specification = SubmissionSpecificationCodec.Deserialize(
+                submission.SpecificationJson);
+            SearchDefinition? acceptedDefinition = specification.Search
+                ?? specification.Command.SearchDefinition;
+            if (acceptedDefinition != null && retainedJobDefinition != null
+                && !string.Equals(
+                    SearchDefinitionCodec.Serialize(acceptedDefinition),
+                    SearchDefinitionCodec.Serialize(retainedJobDefinition),
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    $"Historical search {job.Id} has conflicting accepted and execution definitions.");
+            }
+
+            // A directly accepted search is fully described by its immutable
+            // submission. Extractors can create search children only after the
+            // root was accepted; their derived execution definition therefore
+            // belongs to the retained search-job record.
+            return acceptedDefinition
+                ?? retainedJobDefinition
+                ?? throw MissingSearchDefinition(job.Id);
+        }
+        return retainedJobDefinition ?? throw MissingSearchDefinition(job.Id);
+    }
+
+    private static SearchDefinition? SearchDefinitionFromPayload(PersistedJob job)
+    {
+        if (string.IsNullOrWhiteSpace(job.PayloadJson))
+            return null;
+        using var document = JsonDocument.Parse(job.PayloadJson);
+        JsonElement definition = Child(document.RootElement, "Definition");
+        if (definition.ValueKind == JsonValueKind.Object)
+            return SearchDefinitionCodec.Deserialize(definition.GetRawText());
+
+        // Compatibility for prototype and pre-submission rows that nested the
+        // stable SearchDefinition serialization as a string.
+        string? json = Text(document.RootElement, "DefinitionJson");
+        return string.IsNullOrWhiteSpace(json)
+            ? null
+            : SearchDefinitionCodec.Deserialize(json);
+    }
+
+    private static InvalidOperationException MissingSearchDefinition(Guid jobId)
+        => new($"Historical search {jobId} has no retained search definition and cannot be reprojected authoritatively.");
+
+    public static FileSearchProjection? DefaultFileProjection(PersistedJob job)
     {
         if (string.IsNullOrWhiteSpace(job.PayloadJson))
             return null;
@@ -15,14 +79,20 @@ internal static class HistoricalJobDtoMapper
         if (projection.ValueKind != JsonValueKind.Object)
             return null;
         var query = Child(projection, "Query");
-        return new FileSearchProjectionRequestDto(
-            new SongQueryDto(
-                Text(query, "Artist"), Text(query, "Title"), Text(query, "Album"), Text(query, "URI"),
-                NullableInt(query, "Length"), Bool(query, "ArtistMaybeWrong")),
+        return new FileSearchProjection(
+            new SongQuery
+            {
+                Artist = Text(query, "Artist") ?? "",
+                Title = Text(query, "Title") ?? "",
+                Album = Text(query, "Album") ?? "",
+                URI = Text(query, "URI") ?? "",
+                Length = NullableInt(query, "Length") ?? -1,
+                ArtistMaybeWrong = Bool(query, "ArtistMaybeWrong"),
+            },
             Bool(projection, "IncludeFullResults"));
     }
 
-    public static FolderSearchProjectionRequestDto? DefaultFolderProjection(PersistedJob job)
+    public static FolderSearchProjection? DefaultFolderProjection(PersistedJob job)
     {
         if (string.IsNullOrWhiteSpace(job.PayloadJson))
             return null;
@@ -31,10 +101,15 @@ internal static class HistoricalJobDtoMapper
         if (projection.ValueKind != JsonValueKind.Object)
             return null;
         var query = Child(projection, "Query");
-        return new FolderSearchProjectionRequestDto(
-            new AlbumQueryDto(
-                Text(query, "Artist"), Text(query, "Album"), Text(query, "SearchHint"), Text(query, "URI"),
-                Bool(query, "ArtistMaybeWrong")),
+        return new FolderSearchProjection(
+            new AlbumQuery
+            {
+                Artist = Text(query, "Artist") ?? "",
+                Album = Text(query, "Album") ?? "",
+                SearchHint = Text(query, "SearchHint") ?? "",
+                URI = Text(query, "URI") ?? "",
+                ArtistMaybeWrong = Bool(query, "ArtistMaybeWrong"),
+            },
             Bool(projection, "IncludeFiles"));
     }
 
@@ -56,12 +131,20 @@ internal static class HistoricalJobDtoMapper
             job.ParentJobId,
             job.ResultJobId,
             job.SourceJobId,
-            null,
-            null,
+            ToNullableInt(job.DiscoveryPublicFileCount),
+            ToNullableInt(job.DiscoveryLockedFileCount),
             [],
             [],
             job.FailureDetail,
-            Parse(job.CancellationSource, ServerJobCancellationSource.None));
+            Parse(job.CancellationSource, ServerJobCancellationSource.None),
+            SubmissionId: job.SubmissionId,
+            Role: Parse(job.SemanticRole, ServerJobRole.Legacy),
+            CreatedAtUtc: job.CreatedAtUtc,
+            DiscoveryPublicFileCount: ToNullableInt(job.DiscoveryPublicFileCount),
+            DiscoveryObservedPeerCount: ToNullableInt(job.DiscoveryObservedPeerCount));
+
+    private static int? ToNullableInt(long? value)
+        => value.HasValue ? checked((int)value.Value) : null;
 
     public static JobPayloadDto ToPayload(PersistedJob job)
     {
@@ -77,8 +160,18 @@ internal static class HistoricalJobDtoMapper
                 job.ResultJobId),
             ServerJobKind.Search => new SearchJobPayloadDto(
                 Text(root, "QueryText") ?? job.QueryText ?? "",
-                DefaultFileProjection(job),
-                DefaultFolderProjection(job),
+                DefaultFolderProjection(job) != null
+                    ? ServerSearchDefaultProjectionKind.Album
+                    : DefaultFileProjection(job) != null
+                        ? ServerSearchDefaultProjectionKind.Track
+                        : ServerSearchDefaultProjectionKind.GenericFile,
+                DefaultFileProjection(job) is { } fileProjection
+                    ? ServerSnapshotMapper.ToSongQueryDto(fileProjection.Query)
+                    : null,
+                DefaultFolderProjection(job) is { } folderProjection
+                    ? ServerSnapshotMapper.ToAlbumQueryDto(folderProjection.Query)
+                    : null,
+                DefaultFileProjection(job)?.IncludeFullResults ?? false,
                 Int(root, "ResultCount"),
                 Int(root, "Revision"),
                 Bool(root, "IsComplete")),

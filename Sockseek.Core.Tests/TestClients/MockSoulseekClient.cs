@@ -37,6 +37,7 @@ namespace Tests.ClientTests
         public Func<string, string, CancellationToken, Task>? BeforeDownloadStartsAsync;
         public Func<string, string, CancellationToken, Task>? BeforeDownloadCompletesAsync;
         public Func<string, string, TransferStates, CancellationToken, Task>? AfterDownloadStateChangedAsync;
+        public Action<long, long>? AfterDownloadProgress;
         public Func<SearchQuery, CancellationToken, Task>? BeforeSearchAsync;
         public Func<CancellationToken, Task>? AfterFirstSearchResponseAsync;
         public bool BrowseReturnsBasenames { get; set; }
@@ -470,6 +471,7 @@ namespace Tests.ClientTests
                     {
                         transfer = MakeTransfer(TransferStates.InProgress, bytes, speed, t0);
                         options?.ProgressUpdated?.Invoke((prev, transfer));
+                        AfterDownloadProgress?.Invoke(bytes, prev);
                     }
 
                     // Always fire Queued (R) before acquiring the per-user slot —

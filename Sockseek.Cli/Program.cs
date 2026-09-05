@@ -323,8 +323,8 @@ internal static partial class Program
         backend.ActivityReceived += activity =>
         {
             if (activity.Payload is TrackBatchResolvedActivityDto batch
-                && batch.PrintOption == PrintOption.None
-                && ShouldPrintHumanBatchPreview(batch.PrintOption)
+                && batch.PrintOption == ServerPrintOption.None
+                && ShouldPrintHumanBatchPreview(batch.PrintOption.ToCore())
                 && cliReporter?.UsesLiveRendering != true)
             {
                 PrintCompactTrackBatchResolved(activity, batch, output);
@@ -385,7 +385,12 @@ internal static partial class Program
             {
                 cliReporter?.Stop(printSummary: hasDownloadableJobs);
                 cliReporter = null;
-                PrintOutputRenderer.PrintRequestedOutput(engine.Queue);
+                PrintOutputRenderer.PrintRequestedOutput(
+                    engine.Queue,
+                    engine.UserSuccessCounts.ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Value,
+                        StringComparer.Ordinal));
             }
 
             var exitCode = LogCliSessionExit(logger, DetermineLocalExitCode(engine.Queue));
@@ -429,11 +434,35 @@ internal static partial class Program
             downloadSettings.Search.MinSharesAggregate = 1;
     }
 
-    private sealed class MockFilesJobSettingsResolver(IJobSettingsResolver inner) : IJobSettingsResolver
+    private sealed class MockFilesJobSettingsResolver(IJobSettingsResolver inner)
+        : IJobSettingsResolver, IJobSettingsRequestResolver
     {
-        public DownloadSettings Resolve(DownloadSettings inherited, Job job)
+        public DownloadSettings Resolve(
+            DownloadSettings inherited,
+            Job job,
+            JobSettingsInheritance inheritance = JobSettingsInheritance.None)
         {
-            var settings = inner.Resolve(inherited, job);
+            var settings = inner.Resolve(inherited, job, inheritance);
+            settings.Search.MinSharesAggregate = 1;
+            return settings;
+        }
+
+        public DownloadSettings Resolve(
+            DownloadSettings inherited,
+            Job job,
+            JobSettingsInheritance inheritance,
+            JobSettingsRequestLayers? request)
+        {
+            DownloadSettings settings;
+            if (inner is IJobSettingsRequestResolver requestResolver)
+            {
+                settings = requestResolver.Resolve(inherited, job, inheritance, request);
+            }
+            else
+            {
+                settings = inner.Resolve(inherited, job, inheritance);
+                request?.Download?.ApplyTo(settings);
+            }
             settings.Search.MinSharesAggregate = 1;
             return settings;
         }
@@ -474,8 +503,8 @@ internal static partial class Program
         backend.ActivityReceived += activity =>
         {
             if (activity.Payload is TrackBatchResolvedActivityDto batch
-                && batch.PrintOption == PrintOption.None
-                && ShouldPrintHumanBatchPreview(batch.PrintOption)
+                && batch.PrintOption == ServerPrintOption.None
+                && ShouldPrintHumanBatchPreview(batch.PrintOption.ToCore())
                 && cliReporter?.UsesLiveRendering != true)
             {
                 PrintCompactTrackBatchResolved(activity, batch, output);
@@ -484,6 +513,19 @@ internal static partial class Program
 
         try
         {
+            if (rootSettings.PrintJobs)
+            {
+                CliExitCode previewExit = await PrintRemoteJobPreviewAsync(
+                    backend,
+                    new SubmitExtractJobRequestDto(
+                        rootSettings.Extraction.Input,
+                        rootSettings.Extraction.InputType.ToString(),
+                        Options: BuildRemoteSubmissionOptions(args, cliSettings)),
+                    rootSettings.PrintOption,
+                    cts.Token).ConfigureAwait(false);
+                return LogCliSessionExit(logger, previewExit, remoteSettings);
+            }
+
             Guid workflowId = Guid.NewGuid();
             await backend.SubscribeWorkflowAsync(workflowId, cts.Token);
             using var terminalUpdateObserver = new WorkflowTerminalUpdateObserver(backend, workflowId);
@@ -584,6 +626,80 @@ internal static partial class Program
             await cts.CancelAsync();
             cliReporter?.Stop();
         }
+    }
+
+    internal static async Task<CliExitCode> PrintRemoteJobPreviewAsync(
+        RemoteCliBackend backend,
+        SubmitExtractJobRequestDto request,
+        PrintOption printOption,
+        CancellationToken ct,
+        TextWriter? output = null)
+    {
+        CreateJobPreviewResponseDto created = await backend.CreateJobPreviewAsync(request, ct)
+            .ConfigureAwait(false);
+        JobPreviewSummaryDto preview = await backend.WaitForJobPreviewAsync(
+            created.Preview.PreviewId,
+            ct).ConfigureAwait(false);
+        if (preview.State is JobPreviewState.Expired or JobPreviewState.Committing
+            or JobPreviewState.Committed)
+        {
+            throw new InvalidOperationException(
+                $"Job Preview entered unexpected state '{preview.State}' before it could be printed.");
+        }
+
+        using var outputScope = output is null ? null : Printing.RedirectOutput(output);
+        JobPrintFormatter.PrintHeader(preview.SelectableNodeCount);
+        int printed = 0;
+        await foreach (JobPreviewNodeDto node in backend.GetJobPreviewNodesAsync(
+            preview.PreviewId,
+            ct).ConfigureAwait(false))
+        {
+            if (!node.IsSelectable || ToPreviewPrintJob(node) is not { } job)
+                continue;
+            JobPrintFormatter.PrintJob(job, printOption, separate: printed > 0);
+            printed++;
+        }
+
+        if (printed != preview.SelectableNodeCount)
+        {
+            throw new InvalidOperationException(
+                "The daemon returned a Job Preview node kind that this CLI cannot render.");
+        }
+        if (preview.FailedNodeCount > 0)
+        {
+            Printing.WriteLine();
+            Printing.WriteLine(
+                $"Preview contains {preview.FailedNodeCount} failed planning "
+                + (preview.FailedNodeCount == 1 ? "entry." : "entries."));
+        }
+        return preview.State == JobPreviewState.Ready
+            ? CliExitCode.Success
+            : CliExitCode.WorkFailed;
+    }
+
+    private static Job? ToPreviewPrintJob(JobPreviewNodeDto node)
+    {
+        Job? job = node.Kind switch
+        {
+            ServerJobKind.Search when node.AlbumQuery != null =>
+                new SearchJob(ToAlbumQuery(node.AlbumQuery)),
+            ServerJobKind.Search when node.SongQuery != null =>
+                new SearchJob(ToSongQuery(node.SongQuery)),
+            ServerJobKind.Search when !string.IsNullOrWhiteSpace(node.QueryText) =>
+                new SearchJob(node.QueryText),
+            ServerJobKind.Song when node.SongQuery != null =>
+                new SongJob(ToSongQuery(node.SongQuery)),
+            ServerJobKind.Album when node.AlbumQuery != null =>
+                new AlbumJob(ToAlbumQuery(node.AlbumQuery)),
+            ServerJobKind.Aggregate when node.SongQuery != null =>
+                new AggregateJob(ToSongQuery(node.SongQuery)),
+            ServerJobKind.AlbumAggregate when node.AlbumQuery != null =>
+                new AlbumAggregateJob(ToAlbumQuery(node.AlbumQuery)),
+            _ => null,
+        };
+        if (job != null && !string.IsNullOrWhiteSpace(node.ItemName))
+            job.ItemName = node.ItemName;
+        return job;
     }
 
     private static async Task<CliExitCode> RunRemoteMonitorAsync(
@@ -1353,28 +1469,33 @@ internal static partial class Program
         SearchJobPayloadDto search,
         CancellationToken ct)
     {
-        if (search.DefaultFolderProjection != null)
+        if (search.DefaultProjection == ServerSearchDefaultProjectionKind.Album
+            && search.AlbumQuery != null)
         {
             var folders = await backend.GetFolderResultsAsync(
                 searchJobId,
-                search.DefaultFolderProjection with { IncludeFiles = true },
+                new FolderSearchProjectionRequestDto(
+                    search.AlbumQuery,
+                    IncludeFiles: true),
                 ct);
             return folders == null
                 ? null
-                : new AlbumJob(ToAlbumQuery(search.DefaultFolderProjection.AlbumQuery))
+                : new AlbumJob(ToAlbumQuery(search.AlbumQuery))
                 {
-                    Results = folders.Items.Select(ToAlbumFolder).ToList(),
+                    Results = folders.Items.Select(CliSearchProjectionMapper.ToCore).ToList(),
                 };
         }
 
-        var fileProjection = search.DefaultFileProjection
-            ?? new FileSearchProjectionRequestDto(new SongQueryDto(null, search.QueryText, null, null, null, false));
+        var fileProjection = new FileSearchProjectionRequestDto(
+            search.SongQuery
+                ?? new SongQueryDto(null, search.QueryText, null, null, null, false),
+            search.IncludeFullResults);
         var files = await backend.GetFileResultsAsync(searchJobId, fileProjection, ct);
         return files == null
             ? null
             : new SongJob(ToSongQuery(fileProjection.SongQuery ?? new SongQueryDto(null, search.QueryText, null, null, null, false)))
             {
-                Candidates = files.Items.Select(ToFileCandidate).ToList(),
+                Candidates = files.Items.Select(CliSearchProjectionMapper.ToCore).ToList(),
             };
     }
 
@@ -1386,7 +1507,7 @@ internal static partial class Program
     {
         var files = await backend.GetFileResultsAsync(songJobId, ct);
         var job = ToSongJob(song);
-        job.Candidates = files?.Items.Select(ToFileCandidate).ToList();
+        job.Candidates = files?.Items.Select(CliSearchProjectionMapper.ToCore).ToList();
         return job;
     }
 
@@ -1399,7 +1520,7 @@ internal static partial class Program
     {
         var folders = await backend.GetFolderResultsAsync(albumJobId, includeFiles: true, ct);
         var job = ToAlbumJob(album, summary);
-        job.Results = folders?.Items.Select(ToAlbumFolder).ToList() ?? [];
+        job.Results = folders?.Items.Select(CliSearchProjectionMapper.ToCore).ToList() ?? [];
         return job;
     }
 
@@ -1423,7 +1544,7 @@ internal static partial class Program
             if (payload.CandidateCount.GetValueOrDefault() > 0)
             {
                 var files = await backend.GetFileResultsAsync(summary.JobId, ct);
-                song.Candidates = files?.Items.Select(ToFileCandidate).ToList();
+                song.Candidates = files?.Items.Select(CliSearchProjectionMapper.ToCore).ToList();
             }
 
             job.Songs.Add(song);
@@ -1458,15 +1579,16 @@ internal static partial class Program
     private static SearchJob ToSearchJob(SearchJobPayloadDto search, JobSummaryDto summary)
     {
         SearchJob job;
-        if (search.DefaultFolderProjection != null)
+        if (search.DefaultProjection == ServerSearchDefaultProjectionKind.Album
+            && search.AlbumQuery != null)
         {
-            job = new SearchJob(ToAlbumQuery(search.DefaultFolderProjection.AlbumQuery));
+            job = new SearchJob(ToAlbumQuery(search.AlbumQuery));
         }
-        else if (search.DefaultFileProjection?.SongQuery != null)
+        else if (search.SongQuery != null)
         {
             job = new SearchJob(
-                ToSongQuery(search.DefaultFileProjection.SongQuery),
-                search.DefaultFileProjection.IncludeFullResults);
+                ToSongQuery(search.SongQuery),
+                search.IncludeFullResults);
         }
         else
         {
@@ -1496,8 +1618,8 @@ internal static partial class Program
     private static DownloadSettings RemotePrintSettings(DownloadSettings inherited, JobSummaryDto summary)
     {
         var settings = SettingsCloner.Clone(inherited);
-        if (summary.PrintOption != PrintOption.None)
-            settings.PrintOption = summary.PrintOption;
+        if (summary.PrintOption != ServerPrintOption.None)
+            settings.PrintOption = summary.PrintOption.ToCore();
         return settings;
     }
 
@@ -1603,8 +1725,10 @@ internal static partial class Program
         var options = new ServerOptions
         {
             Engine = CreateDaemonEngineSettings(engineSettings),
-            DefaultDownload = SettingsCloner.Clone(rootSettings),
             LaunchDownloadSettings = ConfigManager.CreateCliDownloadSettingsPatch(args),
+            LaunchProfileNames = ConfigManager.ExtractProfileName(args)?
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                ?? [],
             Profiles = ConfigManager.CreateProfileCatalog(configFile),
             ConfigDir = configFile.ConfigDir,
             Persistence = new ServerPersistenceOptions
@@ -1730,7 +1854,7 @@ internal static partial class Program
         else if (!string.IsNullOrWhiteSpace(song.ResolvedUsername)
             && !string.IsNullOrWhiteSpace(song.ResolvedFilename))
         {
-            job.ResolvedTarget = ToFileCandidate(new FileCandidateDto(
+            job.ResolvedTarget = CliSearchProjectionMapper.ToCore(new FileCandidateDto(
                 new FileCandidateRefDto(song.ResolvedUsername, song.ResolvedFilename),
                 song.ResolvedUsername,
                 song.ResolvedFilename,
@@ -1904,23 +2028,6 @@ internal static partial class Program
                 ? coreSource
                 : JobCancellationSource.InternalEngine;
 
-    private static AlbumFolder ToAlbumFolder(AlbumFolderDto folder)
-        => new(
-            folder.Username,
-            folder.FolderPath,
-            folder.Files?.Select(ToAlbumFile).ToList() ?? [])
-        {
-            IsFullyRetrieved = folder.IsFullyRetrieved,
-        };
-
-    private static AlbumFile ToAlbumFile(FileCandidateDto file)
-    {
-        var candidate = ToFileCandidate(file);
-        return AlbumFile.WithLazyQuery(
-            () => Searcher.InferSongQuery(candidate.Filename, new SongQuery()),
-            candidate);
-    }
-
     private static SongQuery ToSongQuery(SongQueryDto query)
         => new()
         {
@@ -1941,23 +2048,6 @@ internal static partial class Program
             URI = query.Uri ?? "",
             ArtistMaybeWrong = query.ArtistMaybeWrong,
         };
-
-    private static FileCandidate ToFileCandidate(FileCandidateDto candidate)
-        => new(
-            new PeerFileTarget(
-                new PeerFileIdentity(candidate.Username, candidate.Filename),
-                candidate.File.Size < 0 ? null : candidate.File.Size,
-                candidate.File.Extension ?? Path.GetExtension(candidate.Filename),
-                candidate.File.BitRate,
-                candidate.File.BitDepth,
-                candidate.File.SampleRate,
-                candidate.File.Length,
-                candidate.File.Attributes?.Select(x => new FileAttributeSnapshot(x.Type, x.Value)).ToList()),
-            new SearchPeerSnapshot(
-                candidate.Username,
-                responseFileCount: 0,
-                candidate.Peer.UploadSpeed,
-                candidate.Peer.HasFreeUploadSlot));
 
     private static void Write(
         CliOutputController output,

@@ -3,7 +3,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Api;
+using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Server.Planning;
 using Sockseek.Server.Persistence;
 using Sockseek.Persistence.Read;
 using Sockseek.Persistence.Sqlite;
@@ -14,6 +16,20 @@ namespace Sockseek.Server.Tests;
 [TestClass]
 public sealed class PersistenceDaemonTests
 {
+    [TestMethod]
+    public void RetentionBatchCeiling_RequestsBoundedCatchUpWork()
+    {
+        Assert.IsTrue(PersistenceMaintenanceHostedService.MayHaveMore(
+            new PersistenceRetentionResultDto(500, 0, 0, 1),
+            batchSize: 500));
+        Assert.IsTrue(PersistenceMaintenanceHostedService.MayHaveMore(
+            new PersistenceRetentionResultDto(0, 0, 0, 1, PrunedTransfers: 500),
+            batchSize: 500));
+        Assert.IsFalse(PersistenceMaintenanceHostedService.MayHaveMore(
+            new PersistenceRetentionResultDto(499, 499, 499, 1, 499, 500, 499),
+            batchSize: 500));
+    }
+
     [TestMethod]
     public async Task CorruptDatabase_AbortsStartupWithoutReplacement_AndReleasesOwnership()
     {
@@ -141,10 +157,23 @@ public sealed class PersistenceDaemonTests
                 Assert.AreEqual("Healthy", status.Persistence.State);
                 Assert.IsNotNull(status.Persistence.RuntimeId);
                 Assert.IsNotNull(status.Persistence.RuntimeStartedAtUtc);
-                StringAssert.Contains(status.Persistence.SchemaVersion, "AddJobNavigationIndexes");
+                StringAssert.Contains(
+                    status.Persistence.SchemaVersion,
+                    "AddSearchViews");
                 Assert.AreEqual(0, status.Persistence.ReconciledUnfinishedRuntimeCount);
 
                 var coordinator = app.Services.GetRequiredService<PersistenceCoordinator>();
+                Assert.IsNotNull(coordinator.InputArtifacts);
+                Assert.IsNotNull(coordinator.SearchViews);
+                Assert.IsFalse(File.Exists(Path.Combine(
+                    Path.GetDirectoryName(databasePath)!,
+                    "planning",
+                    "input-artifacts",
+                    "artifacts.db")));
+                Assert.IsFalse(File.Exists(Path.Combine(
+                    Path.GetDirectoryName(databasePath)!,
+                    "planning",
+                    "search-views.db")));
                 var integrity = await coordinator.CheckIntegrityAsync(CancellationToken.None);
                 Assert.IsTrue(integrity.IsHealthy);
                 var backup = await coordinator.BackupAsync(
@@ -207,6 +236,225 @@ public sealed class PersistenceDaemonTests
     }
 
     [TestMethod]
+    public async Task SubmissionResource_PersistsArchivesFiltersAndRerunsRetainedSettings()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            "sockseek-submission-resource",
+            Guid.NewGuid().ToString("N"));
+        string mockFiles = Path.Combine(directory, "mock-files");
+        string artistFiles = Path.Combine(mockFiles, "Artist");
+        Directory.CreateDirectory(artistFiles);
+        await File.WriteAllTextAsync(
+            Path.Combine(artistFiles, "Artist - Manual Track.mp3"),
+            "audio");
+        var options = new ServerOptions
+        {
+            ConfigDir = directory,
+            Engine = new EngineSettings { MockFilesDir = mockFiles, MockFilesReadTags = false },
+            Persistence = new ServerPersistenceOptions
+            {
+                Enabled = true,
+                DataDirectory = Path.Combine(directory, "data"),
+            },
+        };
+
+        try
+        {
+            await using var app = ServerHost.Build([], options, "http://127.0.0.1:0");
+            await app.StartAsync();
+            var supervisor = app.Services.GetRequiredService<EngineSupervisor>();
+            var facade = app.Services.GetRequiredService<HistoricalQueryFacade>();
+
+            var awaitingSelection = new TaskCompletionSource<JobSummaryDto>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnManualJob(JobSummaryDto job)
+            {
+                if (job.QueryText?.Contains("Manual Track", StringComparison.Ordinal) == true
+                    && job.LifecycleState == ServerJobLifecycleState.AwaitingSelection)
+                    awaitingSelection.TrySetResult(job);
+            }
+            supervisor.StateStore.JobUpserted += OnManualJob;
+            var manual = await supervisor.SubmitSongJobAsync(
+                new SubmitSongJobRequestDto(
+                    new SongQueryDto("Artist", "Manual Track"),
+                    DownloadBehavior: new DownloadBehaviorPolicyDto(
+                        Song: ServerDownloadBehavior.Manual)),
+                CancellationToken.None);
+            await awaitingSelection.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            supervisor.StateStore.JobUpserted -= OnManualJob;
+            var rejectedArchive = await supervisor.SetSubmissionArchivedAsync(
+                manual.SubmissionId!.Value,
+                archived: true,
+                CancellationToken.None);
+            Assert.AreEqual(1, rejectedArchive.RejectedSubmissionCount);
+            Assert.AreEqual("nonterminal-jobs", rejectedArchive.RejectionReasons.Single().Reason);
+            Assert.IsTrue(supervisor.CancelJob(manual.JobId));
+
+            var firstTerminal = new TaskCompletionSource<JobSummaryDto>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnFirstJob(JobSummaryDto job)
+            {
+                if (job.QueryText == "durable submission"
+                    && job.LifecycleState == ServerJobLifecycleState.Terminal)
+                    firstTerminal.TrySetResult(job);
+            }
+            supervisor.StateStore.JobUpserted += OnFirstJob;
+
+            var submitted = await supervisor.SubmitSearchJobAsync(
+                new SubmitSearchJobRequestDto(
+                    "durable submission",
+                    new SubmissionOptionsDto(
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Search: new SearchSettingsPatchDto(NoBrowseFolder: true)))),
+                CancellationToken.None);
+            await firstTerminal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            supervisor.StateStore.JobUpserted -= OnFirstJob;
+
+            Assert.IsNotNull(submitted.SubmissionId);
+            Assert.AreEqual(ServerJobRole.UserRoot, submitted.Role);
+            Assert.IsNotNull(submitted.CreatedAtUtc);
+            Guid originalSubmissionId = submitted.SubmissionId.Value;
+
+            var page = await facade.GetSubmissionsAsync(null, 100, archived: false);
+            var retained = page.Items.Single(item => item.SubmissionId == originalSubmissionId);
+            var persistenceStatus = supervisor.GetStatus().Persistence!;
+            Assert.AreEqual("Healthy", persistenceStatus.State, persistenceStatus.LastFailure);
+            Assert.AreEqual(1, retained.TotalJobCount);
+            Assert.AreEqual(1, retained.UserRootJobCount);
+            Assert.AreEqual(0, retained.ActiveJobCount);
+            var detail = await facade.GetSubmissionAsync(originalSubmissionId);
+            Assert.IsNotNull(detail);
+            Assert.AreEqual(ServerJobKind.Search, detail.CommandKind);
+
+            var archived = await supervisor.SetSubmissionArchivedAsync(
+                originalSubmissionId,
+                archived: true,
+                CancellationToken.None);
+            Assert.AreEqual(1, archived.AffectedSubmissionCount);
+            Assert.AreEqual(1, archived.AffectedJobCount);
+            Assert.AreEqual(0, archived.RejectedSubmissionCount);
+            Assert.IsFalse((await facade.GetSubmissionsAsync(null, 100, archived: false))
+                .Items.Any(item => item.SubmissionId == originalSubmissionId));
+            Assert.IsTrue((await facade.GetSubmissionsAsync(null, 100, archived: true))
+                .Items.Any(item => item.SubmissionId == originalSubmissionId));
+            Assert.AreEqual(0, (await facade.GetJobsAsync(
+                new JobQuery(
+                    null,
+                    null,
+                    null,
+                    null,
+                    IncludeAll: true,
+                    SubmissionId: originalSubmissionId),
+                null,
+                100)).Items.Count);
+            Assert.AreEqual(1, (await facade.GetJobsAsync(
+                new JobQuery(
+                    null,
+                    null,
+                    null,
+                    null,
+                    IncludeAll: true,
+                    SubmissionId: originalSubmissionId,
+                    Archived: true),
+                null,
+                100)).Items.Count);
+
+            var restored = await supervisor.SetSubmissionArchivedAsync(
+                originalSubmissionId,
+                archived: false,
+                CancellationToken.None);
+            Assert.AreEqual(1, restored.AffectedSubmissionCount);
+
+            var rerunTerminal = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnRerunJob(JobSummaryDto job)
+            {
+                if (job.QueryText != "durable submission"
+                    || job.SubmissionId == originalSubmissionId
+                    || job.LifecycleState != ServerJobLifecycleState.Terminal)
+                    return;
+                bool noBrowseFolder = supervisor
+                    .GetRuntimeJob<Sockseek.Core.Jobs.SearchJob>(job.JobId)?
+                    .Config.Search.NoBrowseFolder == true;
+                rerunTerminal.TrySetResult(noBrowseFolder);
+            }
+            supervisor.StateStore.JobUpserted += OnRerunJob;
+            var rerun = await supervisor.RerunSubmissionAsync(
+                originalSubmissionId,
+                CancellationToken.None);
+            Assert.IsNotNull(rerun);
+            Assert.IsNotNull(rerun.SubmissionId);
+            Assert.AreNotEqual(originalSubmissionId, rerun.SubmissionId);
+            Assert.IsTrue(await rerunTerminal.Task.WaitAsync(TimeSpan.FromSeconds(5)),
+                "Rerun must execute the retained request setting, not the current default.");
+            supervisor.StateStore.JobUpserted -= OnRerunJob;
+
+            var rerunDetail = await facade.GetSubmissionAsync(rerun.SubmissionId.Value);
+            Assert.IsNotNull(rerunDetail);
+            Assert.AreEqual(originalSubmissionId, rerunDetail.Summary.RerunOfSubmissionId);
+
+            var hierarchyTerminal = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnHierarchyJob(JobSummaryDto job)
+            {
+                if (job.ItemName == "archive hierarchy"
+                    && job.LifecycleState == ServerJobLifecycleState.Terminal)
+                    hierarchyTerminal.TrySetResult(true);
+            }
+            supervisor.StateStore.JobUpserted += OnHierarchyJob;
+            JobSummaryDto hierarchy = await supervisor.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "archive hierarchy",
+                    [
+                        new JobListJobDraftDto(
+                            "nested orchestration",
+                            [
+                                new TrackSearchJobDraftDto(
+                                    new SongQueryDto("Missing", "Archive Child")),
+                            ]),
+                    ]),
+                CancellationToken.None);
+            await hierarchyTerminal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            supervisor.StateStore.JobUpserted -= OnHierarchyJob;
+
+            Guid hierarchySubmissionId = hierarchy.SubmissionId!.Value;
+            CombinedJobPage hierarchyJobs = await facade.GetJobsAsync(
+                new JobQuery(
+                    null,
+                    null,
+                    null,
+                    null,
+                    IncludeAll: true,
+                    SubmissionId: hierarchySubmissionId),
+                null,
+                100);
+            CollectionAssert.AreEquivalent(
+                new[]
+                {
+                    ServerJobRole.UserRoot,
+                    ServerJobRole.Orchestration,
+                    ServerJobRole.ExecutionChild,
+                },
+                hierarchyJobs.Items.Select(job => job.Role).ToArray());
+            SubmissionArchiveResponseDto hierarchyArchive = await supervisor
+                .SetSubmissionArchivedAsync(
+                    hierarchySubmissionId,
+                    archived: true,
+                    CancellationToken.None);
+            Assert.AreEqual(3, hierarchyArchive.AffectedJobCount);
+            Assert.AreEqual(0, hierarchyArchive.RejectedSubmissionCount);
+            await app.StopAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task HistoricalSearchResult_StartsNewDownloadAfterFullDaemonRestart()
     {
         string directory = Path.Combine(Path.GetTempPath(), "sockseek-daemon-history", Guid.NewGuid().ToString("N"));
@@ -240,12 +488,20 @@ public sealed class PersistenceDaemonTests
             Guid workflowId;
             int sourceDisplayId;
             FileCandidateRefDto candidate;
-            FileCandidateDto expectedCandidate;
-            AggregateTrackCandidateDto expectedAggregateTrack;
+            Guid fileViewId;
+            long fileViewRevision;
+            SearchViewFileDto expectedCandidate;
+            Guid aggregateTrackViewId;
+            long aggregateTrackViewRevision;
+            SearchViewAggregateTrackGroupDto expectedAggregateTrack;
             Guid albumSearchJobId;
             Guid albumWorkflowId;
-            AlbumFolderDto expectedFolder;
-            AggregateAlbumCandidateDto expectedAggregateAlbum;
+            Guid directoryViewId;
+            long directoryViewRevision;
+            SearchViewDirectoryDto expectedFolder;
+            Guid aggregateAlbumViewId;
+            long aggregateAlbumViewRevision;
+            SearchViewAggregateAlbumGroupDto expectedAggregateAlbum;
 
             await using (var first = ServerHost.Build([], options, "http://127.0.0.1:0"))
             {
@@ -254,27 +510,48 @@ public sealed class PersistenceDaemonTests
                 {
                     var supervisor = first.Services.GetRequiredService<EngineSupervisor>();
                     var persistence = first.Services.GetRequiredService<PersistenceCoordinator>();
-                    var facade = first.Services.GetRequiredService<HistoricalQueryFacade>();
+                    var views = first.Services.GetRequiredService<SearchViewCoordinator>();
                     var search = await supervisor.SubmitTrackSearchJobAsync(
                         new SubmitTrackSearchJobRequestDto(new SongQueryDto("Artist", "Track One")),
                         CancellationToken.None);
                     await WaitForTerminalSuccessAsync(persistence, search.JobId);
                     Assert.IsNull(supervisor.GetRuntimeJob<Sockseek.Core.Jobs.Job>(search.JobId));
-                    var results = await facade.GetFileResultsAsync(search.JobId, null);
-                    Assert.IsNotNull(results);
+                    SearchViewSummaryDto fileView = await CreateCompleteSearchViewAsync(
+                        views,
+                        search.JobId,
+                        new CreateSearchViewRequestDto(ServerSearchViewProjectionKind.Files));
+                    SearchViewFilePageDto results = (await views.GetFilesAsync(
+                        fileView.ViewId,
+                        fileView.Revision,
+                        null,
+                        10,
+                        CancellationToken.None))!;
                     Assert.AreEqual(1, results.Items.Count);
 
                     sourceJobId = search.JobId;
                     workflowId = search.WorkflowId;
                     sourceDisplayId = search.DisplayId;
-                    candidate = results.Items[0].Ref;
+                    fileViewId = fileView.ViewId;
+                    fileViewRevision = fileView.Revision;
+                    candidate = new FileCandidateRefDto(
+                        results.Items[0].Peer.Username,
+                        results.Items[0].RemoteFilename);
                     expectedCandidate = results.Items[0];
 
-                    var aggregateTracks = await facade.GetAggregateTrackResultsAsync(
+                    SearchViewSummaryDto aggregateTrackView = await CreateCompleteSearchViewAsync(
+                        views,
                         search.JobId,
-                        new AggregateTrackProjectionRequestDto(IncludeCandidates: true));
-                    Assert.IsNotNull(aggregateTracks);
+                        new CreateSearchViewRequestDto(ServerSearchViewProjectionKind.AggregateTracks));
+                    SearchViewAggregateTrackPageDto aggregateTracks = (await views
+                        .GetAggregateTracksAsync(
+                            aggregateTrackView.ViewId,
+                            aggregateTrackView.Revision,
+                            null,
+                            10,
+                            CancellationToken.None))!;
                     Assert.AreEqual(1, aggregateTracks.Items.Count);
+                    aggregateTrackViewId = aggregateTrackView.ViewId;
+                    aggregateTrackViewRevision = aggregateTrackView.Revision;
                     expectedAggregateTrack = aggregateTracks.Items[0];
 
                     var albumSearch = await supervisor.SubmitAlbumSearchJobAsync(
@@ -284,18 +561,34 @@ public sealed class PersistenceDaemonTests
                     Assert.IsNull(supervisor.GetRuntimeJob<Sockseek.Core.Jobs.Job>(albumSearch.JobId));
                     albumSearchJobId = albumSearch.JobId;
                     albumWorkflowId = albumSearch.WorkflowId;
-                    var folders = await facade.GetFolderResultsAsync(
+                    SearchViewSummaryDto directoryView = await CreateCompleteSearchViewAsync(
+                        views,
                         albumSearch.JobId,
-                        request: null,
-                        includeFiles: true);
-                    Assert.IsNotNull(folders);
+                        new CreateSearchViewRequestDto(ServerSearchViewProjectionKind.AlbumDirectories));
+                    SearchViewDirectoryPageDto folders = (await views.GetDirectoriesAsync(
+                        directoryView.ViewId,
+                        directoryView.Revision,
+                        null,
+                        10,
+                        CancellationToken.None))!;
                     Assert.AreEqual(1, folders.Items.Count);
+                    directoryViewId = directoryView.ViewId;
+                    directoryViewRevision = directoryView.Revision;
                     expectedFolder = folders.Items[0];
-                    var aggregateAlbums = await facade.GetAggregateAlbumResultsAsync(
+                    SearchViewSummaryDto aggregateAlbumView = await CreateCompleteSearchViewAsync(
+                        views,
                         albumSearch.JobId,
-                        new AggregateAlbumProjectionRequestDto(IncludeFolders: true));
-                    Assert.IsNotNull(aggregateAlbums);
+                        new CreateSearchViewRequestDto(ServerSearchViewProjectionKind.AggregateAlbums));
+                    SearchViewAggregateAlbumPageDto aggregateAlbums = (await views
+                        .GetAggregateAlbumsAsync(
+                            aggregateAlbumView.ViewId,
+                            aggregateAlbumView.Revision,
+                            null,
+                            10,
+                            CancellationToken.None))!;
                     Assert.AreEqual(1, aggregateAlbums.Items.Count);
+                    aggregateAlbumViewId = aggregateAlbumView.ViewId;
+                    aggregateAlbumViewRevision = aggregateAlbumView.Revision;
                     expectedAggregateAlbum = aggregateAlbums.Items[0];
                 }
                 finally
@@ -305,6 +598,7 @@ public sealed class PersistenceDaemonTests
             }
 
             SqliteConnection.ClearAllPools();
+            options.DefaultDownload!.Search.NecessaryCond.Formats = ["ogg"];
 
             await using (var second = ServerHost.Build([], options, "http://127.0.0.1:0"))
             {
@@ -314,11 +608,13 @@ public sealed class PersistenceDaemonTests
                     var supervisor = second.Services.GetRequiredService<EngineSupervisor>();
                     Assert.IsNull(supervisor.GetRuntimeJob<Sockseek.Core.Jobs.Job>(sourceJobId));
 
-                    var historicalProjection = await second.Services
-                        .GetRequiredService<HistoricalQueryFacade>()
-                        .GetFileResultsAsync(sourceJobId, null);
-                    Assert.IsNotNull(historicalProjection);
-                    Assert.AreEqual("Complete", historicalProjection.PersistenceState);
+                    var views = second.Services.GetRequiredService<SearchViewCoordinator>();
+                    SearchViewFilePageDto historicalProjection = (await views.GetFilesAsync(
+                        fileViewId,
+                        fileViewRevision,
+                        null,
+                        10,
+                        CancellationToken.None))!;
                     Assert.AreEqual(1, historicalProjection.Items.Count);
                     Assert.AreEqual(expectedCandidate.Ref, historicalProjection.Items[0].Ref);
                     Assert.AreEqual(expectedCandidate.File.Size, historicalProjection.Items[0].File.Size);
@@ -347,40 +643,56 @@ public sealed class PersistenceDaemonTests
                     Assert.IsFalse(await supervisor.CompleteManualSelectionAsync(sourceJobId));
                     Assert.IsFalse(await supervisor.SkipManualSelectionAsync(sourceJobId));
 
-                    var historicalTracks = await second.Services
-                        .GetRequiredService<HistoricalQueryFacade>()
-                        .GetAggregateTrackResultsAsync(
-                            sourceJobId,
-                            new AggregateTrackProjectionRequestDto(IncludeCandidates: true));
-                    Assert.IsNotNull(historicalTracks);
-                    Assert.AreEqual("Complete", historicalTracks.PersistenceState);
+                    SearchViewAggregateTrackPageDto historicalTracks = (await views
+                        .GetAggregateTracksAsync(
+                            aggregateTrackViewId,
+                            aggregateTrackViewRevision,
+                            null,
+                            10,
+                            CancellationToken.None))!;
                     Assert.AreEqual(1, historicalTracks.Items.Count);
                     Assert.AreEqual(expectedAggregateTrack.Query, historicalTracks.Items[0].Query);
-                    Assert.AreEqual(expectedAggregateTrack.Candidates?[0].Ref, historicalTracks.Items[0].Candidates?[0].Ref);
+                    Assert.AreEqual(
+                        expectedAggregateTrack.Representative.Ref,
+                        historicalTracks.Items[0].Representative.Ref);
 
-                    var historicalFolders = await second.Services
-                        .GetRequiredService<HistoricalQueryFacade>()
-                        .GetFolderResultsAsync(albumSearchJobId, null, includeFiles: true);
-                    Assert.IsNotNull(historicalFolders);
-                    Assert.AreEqual("Complete", historicalFolders.PersistenceState);
+                    SearchViewDirectoryPageDto historicalFolders = (await views.GetDirectoriesAsync(
+                        directoryViewId,
+                        directoryViewRevision,
+                        null,
+                        10,
+                        CancellationToken.None))!;
                     Assert.AreEqual(1, historicalFolders.Items.Count);
                     Assert.AreEqual(expectedFolder.Ref, historicalFolders.Items[0].Ref);
-                    Assert.AreEqual(expectedFolder.Files?[0].Ref, historicalFolders.Items[0].Files?[0].Ref);
+                    SearchViewDirectoryFilePageDto historicalChildren = (await views
+                        .GetDirectoryFilesAsync(
+                            directoryViewId,
+                            expectedFolder.Ref.Ref,
+                            directoryViewRevision,
+                            null,
+                            10,
+                            CancellationToken.None))!;
+                    Assert.AreEqual(1, historicalChildren.Items.Count);
+                    Assert.AreEqual(expectedFolder.BestChild.Ref, historicalChildren.Items[0].Ref);
 
-                    var historicalAlbums = await second.Services
-                        .GetRequiredService<HistoricalQueryFacade>()
-                        .GetAggregateAlbumResultsAsync(
-                            albumSearchJobId,
-                            new AggregateAlbumProjectionRequestDto(IncludeFolders: true));
-                    Assert.IsNotNull(historicalAlbums);
-                    Assert.AreEqual("Complete", historicalAlbums.PersistenceState);
+                    SearchViewAggregateAlbumPageDto historicalAlbums = (await views
+                        .GetAggregateAlbumsAsync(
+                            aggregateAlbumViewId,
+                            aggregateAlbumViewRevision,
+                            null,
+                            10,
+                            CancellationToken.None))!;
                     Assert.AreEqual(1, historicalAlbums.Items.Count);
                     Assert.AreEqual(expectedAggregateAlbum.Query, historicalAlbums.Items[0].Query);
-                    Assert.AreEqual(expectedAggregateAlbum.Folders?[0].Ref, historicalAlbums.Items[0].Folders?[0].Ref);
+                    Assert.AreEqual(
+                        expectedAggregateAlbum.Representative.Ref,
+                        historicalAlbums.Items[0].Representative.Ref);
 
-                    var retrieved = await supervisor.StartRetrieveFolderAsync(
-                        albumSearchJobId,
-                        new RetrieveFolderRequestDto(expectedFolder.Ref),
+                    var retrieved = await views.StartDirectoryRetrievalAsync(
+                        directoryViewId,
+                        new RetrieveSearchViewDirectoryRequestDto(
+                            directoryViewRevision,
+                            expectedFolder.Ref),
                         CancellationToken.None);
                     Assert.IsNotNull(retrieved);
                     Assert.AreEqual(albumSearchJobId, retrieved.SourceJobId);
@@ -392,7 +704,9 @@ public sealed class PersistenceDaemonTests
 
                     var albumDownload = await supervisor.StartFolderDownloadAsync(
                         albumSearchJobId,
-                        new StartFolderDownloadRequestDto(expectedFolder.Ref),
+                        new StartFolderDownloadRequestDto(new AlbumFolderRefDto(
+                            expectedFolder.Ref.Username,
+                            expectedFolder.Ref.FolderPath)),
                         CancellationToken.None);
                     Assert.IsNotNull(albumDownload);
                     Assert.AreEqual(albumSearchJobId, albumDownload.SourceJobId);
@@ -495,6 +809,36 @@ public sealed class PersistenceDaemonTests
         {
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    private static async Task<SearchViewSummaryDto> CreateCompleteSearchViewAsync(
+        SearchViewCoordinator views,
+        Guid sourceJobId,
+        CreateSearchViewRequestDto request)
+    {
+        var publications = System.Threading.Channels.Channel.CreateUnbounded<(Guid Id, long Revision)>();
+        void OnPublished(Guid id, long revision) => publications.Writer.TryWrite((id, revision));
+        views.ViewPublished += OnPublished;
+        try
+        {
+            SearchViewSummaryDto summary = (await views.CreateAsync(
+                sourceJobId,
+                request,
+                CancellationToken.None))!;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (!summary.IsComplete)
+            {
+                (Guid id, _) = await publications.Reader.ReadAsync(timeout.Token);
+                if (id != summary.ViewId)
+                    continue;
+                summary = (await views.GetAsync(summary.ViewId, timeout.Token))!;
+            }
+            return summary;
+        }
+        finally
+        {
+            views.ViewPublished -= OnPublished;
         }
     }
 

@@ -138,7 +138,9 @@ public sealed record SearchPeerSnapshot
         string username,
         int responseFileCount,
         int? uploadSpeed,
-        bool? hasFreeUploadSlot)
+        bool? hasFreeUploadSlot,
+        int? queueLength = null,
+        DateTimeOffset? observedAtUtc = null)
     {
         if (responseFileCount < 0)
             throw new ArgumentOutOfRangeException(nameof(responseFileCount));
@@ -147,19 +149,24 @@ public sealed record SearchPeerSnapshot
         ResponseFileCount = responseFileCount;
         UploadSpeed = uploadSpeed;
         HasFreeUploadSlot = hasFreeUploadSlot;
+        QueueLength = queueLength;
+        ObservedAtUtc = observedAtUtc ?? DateTimeOffset.UnixEpoch;
     }
 
     public string Username { get; }
     public int ResponseFileCount { get; }
     public int? UploadSpeed { get; }
     public bool? HasFreeUploadSlot { get; }
+    public int? QueueLength { get; }
+    public DateTimeOffset ObservedAtUtc { get; }
 }
 
 /// <summary>Search ordering/revision evidence that is not a remote-file fact.</summary>
 public sealed record FileSearchEvidence(
     long Sequence,
     int Revision,
-    DateTimeOffset ObservedAtUtc)
+    DateTimeOffset ObservedAtUtc,
+    SearchResultVisibility Visibility = SearchResultVisibility.Public)
 {
     public static FileSearchEvidence Unspecified { get; } = new(0, 0, DateTimeOffset.UnixEpoch);
 }

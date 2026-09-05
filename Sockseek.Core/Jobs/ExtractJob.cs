@@ -16,6 +16,11 @@ namespace Sockseek.Core.Jobs;
         // Set by the engine after extraction. Null until the engine processes this job.
         public Job? Result { get; set; }
 
+        // Set by JobPlanner. Runtime consumes the captured result/failure and
+        // must not read the source or invoke the extractor again.
+        public bool HasPlannedExtraction { get; set; }
+        public string? PlannedExtractionFailure { get; set; }
+
         protected override bool DefaultCanBeSkipped => false;
 
         public ExtractJob(string input, InputType? inputType = null)

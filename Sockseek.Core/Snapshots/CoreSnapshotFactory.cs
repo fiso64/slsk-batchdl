@@ -3,6 +3,7 @@ using Sockseek.Core.Models;
 using Sockseek.Core.Settings;
 using Sockseek.Core;
 using Sockseek.Core.Events;
+using Sockseek.Core.Services;
 
 namespace Sockseek.Core.Snapshots;
 
@@ -18,14 +19,17 @@ public static class CoreSnapshotFactory
             new PeerSnapshot(
                 candidate.Username,
                 candidate.HasFreeUploadSlot,
-                candidate.UploadSpeed),
+                candidate.UploadSpeed,
+                candidate.QueueLength,
+                candidate.ObservedAtUtc),
             candidate.Size,
             candidate.BitRate,
             candidate.BitDepth,
             candidate.SampleRate,
             candidate.Length,
             candidate.Extension,
-            candidate.Attributes);
+            candidate.Attributes,
+            candidate.Visibility);
 
     public static PeerFileTargetSnapshot CreatePeerFileTarget(PeerFileTarget target)
         => new(
@@ -71,7 +75,9 @@ public static class CoreSnapshotFactory
             result.UploadSpeed,
             result.HasFreeUploadSlot,
             result.Attributes,
-            result.ObservedAtUtc);
+            result.ObservedAtUtc,
+            result.QueueLength,
+            result.Visibility);
 
     public static TransferSnapshot CreateDownloadTransfer(
         Guid transferId,
@@ -101,7 +107,8 @@ public static class CoreSnapshotFactory
             TotalBytes: totalBytes,
             AttemptCount: attemptCount,
             candidateSnapshot,
-            CreatePeerFileTarget(candidate.Target));
+            CreatePeerFileTarget(candidate.Target),
+            File: CreateTransferFileMetadata(candidateSnapshot));
     }
 
     public static TransferSnapshot CreateDownloadTransfer(
@@ -130,7 +137,8 @@ public static class CoreSnapshotFactory
             TotalBytes: totalBytes,
             AttemptCount: attemptCount,
             Candidate: null,
-            Target: CreatePeerFileTarget(target));
+            Target: CreatePeerFileTarget(target),
+            File: CreateTransferFileMetadata(CreatePeerFileTarget(target)));
 
     public static TransferSnapshot CreateFallbackTransfer(
         Guid transferId,
@@ -159,6 +167,32 @@ public static class CoreSnapshotFactory
             attemptCount,
             Candidate: null,
             Target: null);
+
+    private static TransferFileMetadataSnapshot CreateTransferFileMetadata(
+        FileCandidateSnapshot candidate)
+        => new(
+            Utils.GetFileNameSlsk(candidate.Filename),
+            candidate.Size,
+            candidate.Extension,
+            candidate.BitRate,
+            candidate.BitDepth,
+            candidate.SampleRate,
+            candidate.Length,
+            candidate.Attributes);
+
+    private static TransferFileMetadataSnapshot? CreateTransferFileMetadata(
+        PeerFileTargetSnapshot target)
+        => target.Size is not { } size
+            ? null
+            : new(
+                Utils.GetFileNameSlsk(target.Identity.Filename),
+                size,
+                target.Extension,
+                target.BitRate,
+                target.BitDepth,
+                target.SampleRate,
+                target.Length,
+                target.Attributes);
 
     public static AlbumFolderSnapshot CreateAlbumFolder(AlbumFolder folder, bool includeFiles)
     {
@@ -189,6 +223,13 @@ public static class CoreSnapshotFactory
                 job.Id,
                 job.DisplayId,
                 job.WorkflowId,
+                job.SubmissionId,
+                job.SemanticRole,
+                job.CreatedAtUtc,
+                job.SubmissionSpecificationJson,
+                job.RerunOfSubmissionId,
+                job.PreviewId,
+                job.ArtifactId,
                 GetJobKind(job),
                 revision,
                 job.LifecycleState,
@@ -215,6 +256,13 @@ public static class CoreSnapshotFactory
                 job.Id,
                 job.DisplayId,
                 job.WorkflowId,
+                job.SubmissionId,
+                job.SemanticRole,
+                job.CreatedAtUtc,
+                job.SubmissionSpecificationJson,
+                job.RerunOfSubmissionId,
+                job.PreviewId,
+                job.ArtifactId,
                 GetJobKind(job),
                 revision,
                 job.LifecycleState,
@@ -262,20 +310,23 @@ public static class CoreSnapshotFactory
                         search.DefaultFolderProjection.IncludeFiles),
                 search.ResultCount,
                 search.Revision,
-                search.IsComplete),
+                search.IsComplete,
+                search.Definition),
             SongJob song => new SongJobSnapshotPayload(
                 CreateSongQuery(song.Query),
                 song.Candidates?.Count,
                 song.ResolvedTarget == null ? null : CreateFileCandidate(song.ResolvedTarget),
                 song.ExactTarget == null ? null : CreatePeerFileTarget(song.ExactTarget),
                 song.DownloadSource,
-                CreateFileDownloadState(song)),
+                CreateFileDownloadState(song),
+                song.ExecutedSearchDefinition),
             AlbumJob album => new AlbumJobSnapshotPayload(
                 CreateAlbumQuery(album.Query),
                 album.Results.Count,
                 album.ResolvedTarget == null ? null : CreateAlbumFolder(album.ResolvedTarget, includeFiles: false),
                 SnapshotCollections.Freeze(album.TrackJobs.Select(child => CreateJob(child, 0, visited))),
-                CreateDirectoryDownloadState(album)),
+                CreateDirectoryDownloadState(album),
+                album.ExecutedSearchDefinition),
             RemoteFileJob remoteFile => new RemoteFileJobSnapshotPayload(
                 CreatePeerFileTarget(remoteFile.Target),
                 new RelativeOutputPathSnapshot(SnapshotCollections.Freeze(remoteFile.OutputPath.Components)),
@@ -283,10 +334,12 @@ public static class CoreSnapshotFactory
             RemoteDirectoryJob remoteDirectory => CreateRemoteDirectoryPayload(remoteDirectory, visited),
             AggregateJob aggregate => new AggregateJobSnapshotPayload(
                 CreateSongQuery(aggregate.Query),
-                SnapshotCollections.Freeze(aggregate.Songs.Select(song => CreateJob(song, 0, visited)))),
+                SnapshotCollections.Freeze(aggregate.Songs.Select(song => CreateJob(song, 0, visited))),
+                aggregate.ExecutedSearchDefinition),
             AlbumAggregateJob albumAggregate => new AlbumAggregateJobSnapshotPayload(
                 CreateAlbumQuery(albumAggregate.Query),
-                albumAggregate.Albums.Count),
+                albumAggregate.Albums.Count,
+                albumAggregate.ExecutedSearchDefinition),
             JobList list => new JobListSnapshotPayload(
                 list.Count,
                 SnapshotCollections.Freeze(list.Jobs.Select(child => CreateJob(child, 0, visited)))),
@@ -355,7 +408,10 @@ public static class CoreSnapshotFactory
     private static DiscoverySnapshot? CreateDiscovery(DiscoverySummary? discovery)
         => discovery == null
             ? null
-            : new DiscoverySnapshot(discovery.RawResultCount, discovery.LockedFileCount);
+            : new DiscoverySnapshot(
+                discovery.RawResultCount,
+                discovery.LockedFileCount,
+                discovery.ObservedPeerCount);
 
     private static bool CanCancel(Job job)
         => job.LifecycleState != JobLifecycleState.Terminal

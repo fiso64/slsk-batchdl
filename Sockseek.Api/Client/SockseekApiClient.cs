@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Text.Json;
 
 namespace Sockseek.Api;
@@ -40,7 +41,8 @@ public sealed record TransferHistoryFilter(
     string? TerminalOutcome = null,
     string? Username = null,
     DateTimeOffset? FromUtc = null,
-    DateTimeOffset? ToUtc = null);
+    DateTimeOffset? ToUtc = null,
+    bool Archived = false);
 
 /// <summary>Exception raised for daemon HTTP responses that intentionally return an API error body.</summary>
 public sealed class SockseekApiRequestException : InvalidOperationException
@@ -151,6 +153,252 @@ public sealed class SockseekApiClient
     public async Task<JobSummaryDto> SubmitJobListAsync(SubmitJobListRequestDto request, CancellationToken ct = default)
         => await PostJobAsync("api/jobs/lists", request, ct);
 
+    /// <summary>Resolves UI-safe effective settings without creating a workflow or runtime job.</summary>
+    public async Task<ResolveEffectiveSettingsResponseDto> ResolveEffectiveSettingsAsync(
+        ResolveEffectiveSettingsRequestDto request,
+        CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync(
+            "api/jobs/effective-settings",
+            request,
+            jsonOptions,
+            ct);
+        await EnsureSuccessAsync(response, ct);
+        return await response.Content.ReadFromJsonAsync<ResolveEffectiveSettingsResponseDto>(
+            jsonOptions,
+            ct) ?? throw new SockseekApiRequestException("The daemon returned an empty effective-settings response.");
+    }
+
+    public Task<CreateJobPreviewResponseDto> CreateJobPreviewAsync(
+        CreateJobPreviewRequestDto request,
+        CancellationToken ct = default)
+        => PostRequiredAsync<CreateJobPreviewResponseDto, CreateJobPreviewRequestDto>(
+            "api/job-previews",
+            request,
+            ct);
+
+    public async Task<InputArtifactDto> UploadInputArtifactAsync(
+        Stream content,
+        string? originalName = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "api/input-artifacts"
+                + (string.IsNullOrEmpty(originalName)
+                    ? ""
+                    : "?fileName=" + Uri.EscapeDataString(originalName)));
+        request.Content = new StreamContent(content);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        using HttpResponseMessage response = await http.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<InputArtifactDto>(response, ct);
+    }
+
+    public Task<InputArtifactDto?> GetInputArtifactAsync(
+        string artifactId,
+        CancellationToken ct = default)
+        => GetOptionalAsync<InputArtifactDto>(
+            $"api/input-artifacts/{Uri.EscapeDataString(artifactId)}",
+            ct);
+
+    public Task<JobPreviewSummaryDto?> GetJobPreviewAsync(
+        Guid previewId,
+        CancellationToken ct = default)
+        => GetOptionalAsync<JobPreviewSummaryDto>($"api/job-previews/{previewId}", ct);
+
+    public async Task<CursorPage<JobPreviewNodeDto>?> GetJobPreviewNodesPageAsync(
+        Guid previewId,
+        string? parentRef = null,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        string url = $"api/job-previews/{previewId}/nodes?limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + QueryPart("parentRef", parentRef)
+            + QueryPart("cursor", cursor);
+        using var response = await http.GetAsync(url, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return new CursorPage<JobPreviewNodeDto>(
+            await ReadRequiredAsync<IReadOnlyList<JobPreviewNodeDto>>(response, ct),
+            Header(response, "X-Next-Cursor"));
+    }
+
+    public Task<CommitJobPreviewResponseDto> CommitJobPreviewAsync(
+        Guid previewId,
+        CommitJobPreviewRequestDto request,
+        CancellationToken ct = default)
+        => PostRequiredAsync<CommitJobPreviewResponseDto, CommitJobPreviewRequestDto>(
+            $"api/job-previews/{previewId}/commit",
+            request,
+            ct);
+
+    /// <summary>
+    /// Creates a disk-backed projection that can be read while its source
+    /// search is still running. The returned revision is immutable.
+    /// </summary>
+    public Task<SearchViewSummaryDto> CreateSearchViewAsync(
+        Guid jobId,
+        CreateSearchViewRequestDto request,
+        CancellationToken ct = default)
+        => PostRequiredAsync<SearchViewSummaryDto, CreateSearchViewRequestDto>(
+            $"api/jobs/{jobId}/search-views",
+            request,
+            ct);
+
+    public Task<SearchViewSummaryDto?> GetSearchViewAsync(
+        Guid viewId,
+        CancellationToken ct = default)
+        => GetOptionalAsync<SearchViewSummaryDto>($"api/search-views/{viewId}", ct);
+
+    public Task<SearchViewFilePageDto?> GetSearchViewFilesAsync(
+        Guid viewId,
+        long revision,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => GetOptionalAsync<SearchViewFilePageDto>(
+            $"api/search-views/{viewId}/files"
+            + $"?revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + $"&limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + QueryPart("cursor", cursor),
+            ct);
+
+    public Task<SearchViewDirectoryPageDto?> GetSearchViewDirectoriesAsync(
+        Guid viewId,
+        long revision,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => GetOptionalAsync<SearchViewDirectoryPageDto>(
+            $"api/search-views/{viewId}/directories"
+            + $"?revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + $"&limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + QueryPart("cursor", cursor),
+            ct);
+
+    public Task<SearchViewDirectoryFilePageDto?> GetSearchViewDirectoryFilesAsync(
+        Guid viewId,
+        string directoryRef,
+        long revision,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => GetOptionalAsync<SearchViewDirectoryFilePageDto>(
+            $"api/search-views/{viewId}/directories/{Uri.EscapeDataString(directoryRef)}/files"
+            + $"?revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + $"&limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + QueryPart("cursor", cursor),
+            ct);
+
+    public Task<JobSummaryDto> RetrieveSearchViewDirectoryAsync(
+        Guid viewId,
+        RetrieveSearchViewDirectoryRequestDto request,
+        CancellationToken ct = default)
+        => PostRequiredAsync<JobSummaryDto, RetrieveSearchViewDirectoryRequestDto>(
+            $"api/search-views/{viewId}/directories/retrieve",
+            request,
+            ct);
+
+    public Task<SearchViewAggregateTrackPageDto?> GetSearchViewAggregateTracksAsync(
+        Guid viewId,
+        long revision,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => GetOptionalAsync<SearchViewAggregateTrackPageDto>(
+            $"api/search-views/{viewId}/aggregate-tracks"
+            + $"?revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + $"&limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + QueryPart("cursor", cursor),
+            ct);
+
+    public Task<SearchViewAggregateTrackOptionPageDto?> GetSearchViewAggregateTrackOptionsAsync(
+        Guid viewId,
+        string groupRef,
+        long revision,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => GetOptionalAsync<SearchViewAggregateTrackOptionPageDto>(
+            $"api/search-views/{viewId}/aggregate-tracks/{Uri.EscapeDataString(groupRef)}/alternatives"
+            + $"?revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + $"&limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + QueryPart("cursor", cursor),
+            ct);
+
+    public Task<SearchViewAggregateAlbumPageDto?> GetSearchViewAggregateAlbumsAsync(
+        Guid viewId,
+        long revision,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => GetOptionalAsync<SearchViewAggregateAlbumPageDto>(
+            $"api/search-views/{viewId}/aggregate-albums"
+            + $"?revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + $"&limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + QueryPart("cursor", cursor),
+            ct);
+
+    public Task<SearchViewAggregateAlbumOptionPageDto?> GetSearchViewAggregateAlbumOptionsAsync(
+        Guid viewId,
+        string groupRef,
+        long revision,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => GetOptionalAsync<SearchViewAggregateAlbumOptionPageDto>(
+            $"api/search-views/{viewId}/aggregate-albums/{Uri.EscapeDataString(groupRef)}/alternatives"
+            + $"?revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + $"&limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + QueryPart("cursor", cursor),
+            ct);
+
+    public Task<SearchViewUpdateDto?> GetSearchViewUpdatesAsync(
+        Guid viewId,
+        long afterRevision,
+        CancellationToken ct = default)
+        => GetOptionalAsync<SearchViewUpdateDto>(
+            $"api/search-views/{viewId}/updates"
+            + $"?afterRevision={afterRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            ct);
+
+    public Task<CommitSearchViewSelectionResponseDto> CommitSearchViewSelectionAsync(
+        Guid viewId,
+        CommitSearchViewSelectionRequestDto request,
+        CancellationToken ct = default)
+        => PostRequiredAsync<CommitSearchViewSelectionResponseDto, CommitSearchViewSelectionRequestDto>(
+            $"api/search-views/{viewId}/commit",
+            request,
+            ct);
+
+    public Task<UserRestrictionsDto?> GetUserRestrictionsAsync(
+        string username,
+        CancellationToken ct = default)
+        => GetOptionalAsync<UserRestrictionsDto>(
+            $"api/users/{Uri.EscapeDataString(username)}/restrictions",
+            ct);
+
+    public async Task<UserRestrictionsDto> SetUserRestrictionAsync(
+        string username,
+        SetUserRestrictionOverrideRequestDto request,
+        CancellationToken ct = default)
+    {
+        using HttpResponseMessage response = await http.PutAsJsonAsync(
+            $"api/users/{Uri.EscapeDataString(username)}/restrictions",
+            request,
+            jsonOptions,
+            ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<UserRestrictionsDto>(response, ct);
+    }
+
     /// <summary>Returns available daemon profiles.</summary>
     public async Task<IReadOnlyList<ProfileSummaryDto>> GetProfilesAsync(CancellationToken ct = default)
     {
@@ -189,6 +437,9 @@ public sealed class SockseekApiClient
             + QueryPart("kind", query.Kind?.ToWireString())
             + QueryPart("workflowId", query.WorkflowId?.ToString())
             + QueryPart("parentJobId", query.ParentJobId?.ToString())
+            + QueryPart("submissionId", query.SubmissionId?.ToString())
+            + QueryPart("role", query.Role?.ToString())
+            + QueryPart("archived", query.Archived.ToString().ToLowerInvariant())
             + QueryPart("cursor", cursor)
             + QueryPart("limit", limit.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
@@ -209,6 +460,41 @@ public sealed class SockseekApiClient
 
     public Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, CancellationToken ct = default)
         => GetOptionalAsync<WorkflowDetailDto>($"api/workflows/{workflowId}", ct);
+
+    public async Task<CursorPage<SubmissionSummaryDto>> GetSubmissionsPageAsync(
+        bool archived = false,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => await GetCursorPageAsync<SubmissionSummaryDto>(
+            $"api/submissions?archived={archived.ToString().ToLowerInvariant()}&limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            + QueryPart("cursor", cursor),
+            ct);
+
+    public Task<SubmissionDetailDto?> GetSubmissionAsync(
+        Guid submissionId,
+        CancellationToken ct = default)
+        => GetOptionalAsync<SubmissionDetailDto>($"api/submissions/{submissionId}", ct);
+
+    public Task<SubmissionArchiveResponseDto> SetSubmissionArchivedAsync(
+        Guid submissionId,
+        bool archived,
+        CancellationToken ct = default)
+        => PostRequiredAsync<SubmissionArchiveResponseDto, SetSubmissionArchivedRequestDto>(
+            $"api/submissions/{submissionId}/archive",
+            new SetSubmissionArchivedRequestDto(archived),
+            ct);
+
+    public async Task<JobSummaryDto?> RerunSubmissionAsync(
+        Guid submissionId,
+        CancellationToken ct = default)
+    {
+        using var response = await http.PostAsync($"api/submissions/{submissionId}/rerun", null, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<JobSummaryDto>(response, ct);
+    }
 
     public async Task<CursorPage<WorkflowSummaryDto>> GetWorkflowsPageAsync(
         string? cursor = null,
@@ -235,7 +521,7 @@ public sealed class SockseekApiClient
             HeaderLong(response, "X-Next-Sequence"));
     }
 
-    public async Task<CursorPage<TransferHistoryDto>> GetTransfersPageAsync(
+    public async Task<TransferTimelinePageDto> GetTransfersPageAsync(
         TransferHistoryFilter? query = null,
         string? cursor = null,
         int limit = 100,
@@ -252,15 +538,48 @@ public sealed class SockseekApiClient
             + QueryPart("username", query.Username)
             + QueryPart("fromUtc", query.FromUtc?.ToString("O"))
             + QueryPart("toUtc", query.ToUtc?.ToString("O"))
+            + QueryPart("archived", query.Archived.ToString().ToLowerInvariant())
             + QueryPart("cursor", cursor);
-        return await GetCursorPageAsync<TransferHistoryDto>(url, ct);
+        return await GetRequiredAsync<TransferTimelinePageDto>(url, ct);
     }
+
+    public Task<DashboardAnalyticsDto> GetDashboardAnalyticsAsync(
+        string range = "24h",
+        CancellationToken ct = default)
+        => GetRequiredAsync<DashboardAnalyticsDto>(
+            "api/dashboard/analytics?range=" + Uri.EscapeDataString(range),
+            ct);
 
     public Task<TransferDetailDto?> GetTransferAsync(
         Guid transferId,
         CancellationToken ct = default)
         => GetOptionalAsync<TransferDetailDto>(
             $"api/transfers/{transferId}", ct);
+
+    public Task<TransferCommandReceiptDto> CancelTransfersAsync(
+        BulkCancelTransfersRequestDto request,
+        CancellationToken ct = default)
+        => PostRequiredAsync<TransferCommandReceiptDto, BulkCancelTransfersRequestDto>(
+            "api/transfers/cancel",
+            request,
+            ct);
+
+    public Task<TransferCommandReceiptDto> SetTransferArchivedAsync(
+        Guid transferId,
+        bool archived = true,
+        CancellationToken ct = default)
+        => PostRequiredAsync<TransferCommandReceiptDto, SetTransferArchivedRequestDto>(
+            $"api/transfers/{transferId:D}/archive",
+            new SetTransferArchivedRequestDto(archived),
+            ct);
+
+    public Task<TransferCommandReceiptDto> SetTransfersArchivedAsync(
+        ArchiveTransfersRequestDto request,
+        CancellationToken ct = default)
+        => PostRequiredAsync<TransferCommandReceiptDto, ArchiveTransfersRequestDto>(
+            "api/transfers/archive",
+            request,
+            ct);
 
     public Task<SharingStateDto> GetSharingAsync(CancellationToken ct = default)
         => GetRequiredAsync<SharingStateDto>("api/sharing", ct);
@@ -336,54 +655,6 @@ public sealed class SockseekApiClient
 
     public async Task<PersistenceRetentionResultDto> RunPersistenceRetentionAsync(CancellationToken ct = default)
         => await PostWithoutBodyAsync<PersistenceRetentionResultDto>("api/persistence/retention", ct);
-
-    public Task<SearchResultSnapshotDto<FileCandidateDto>?> GetFileResultsAsync(Guid jobId, CancellationToken ct = default)
-        => GetOptionalAsync<SearchResultSnapshotDto<FileCandidateDto>>(
-            $"api/jobs/{jobId}/results/files", ct);
-
-    /// <summary>Projects a search job's raw results into file candidates using an explicit projection request.</summary>
-    public async Task<SearchResultSnapshotDto<FileCandidateDto>?> ProjectFileResultsAsync(Guid jobId, FileSearchProjectionRequestDto request, CancellationToken ct = default)
-        => await PostOptionalAsync<SearchResultSnapshotDto<FileCandidateDto>, FileSearchProjectionRequestDto>($"api/jobs/{jobId}/results/files/project", request, ct);
-
-    /// <summary>Alias for <see cref="ProjectFileResultsAsync"/> kept for compatibility with earlier client code.</summary>
-    public async Task<SearchResultSnapshotDto<FileCandidateDto>?> GetFileResultsAsync(Guid jobId, FileSearchProjectionRequestDto request, CancellationToken ct = default)
-        => await ProjectFileResultsAsync(jobId, request, ct);
-
-    public Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetFolderResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
-        => GetOptionalAsync<SearchResultSnapshotDto<AlbumFolderDto>>(
-            $"api/jobs/{jobId}/results/folders?includeFiles={includeFiles.ToString().ToLowerInvariant()}", ct);
-
-    /// <summary>Projects a search job's raw results into album folders using an explicit projection request.</summary>
-    public async Task<SearchResultSnapshotDto<AlbumFolderDto>?> ProjectFolderResultsAsync(Guid jobId, FolderSearchProjectionRequestDto request, CancellationToken ct = default)
-        => await PostOptionalAsync<SearchResultSnapshotDto<AlbumFolderDto>, FolderSearchProjectionRequestDto>($"api/jobs/{jobId}/results/folders/project", request, ct);
-
-    /// <summary>Alias for <see cref="ProjectFolderResultsAsync"/> kept for compatibility with earlier client code.</summary>
-    public async Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetFolderResultsAsync(Guid jobId, FolderSearchProjectionRequestDto request, CancellationToken ct = default)
-        => await ProjectFolderResultsAsync(jobId, request, ct);
-
-    public Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackResultsAsync(Guid jobId, CancellationToken ct = default)
-        => GetOptionalAsync<SearchResultSnapshotDto<AggregateTrackCandidateDto>>(
-            $"api/jobs/{jobId}/results/aggregate-tracks", ct);
-
-    /// <summary>Projects a search job's raw results into aggregate track candidates using an explicit projection request.</summary>
-    public async Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> ProjectAggregateTrackResultsAsync(Guid jobId, AggregateTrackProjectionRequestDto request, CancellationToken ct = default)
-        => await PostOptionalAsync<SearchResultSnapshotDto<AggregateTrackCandidateDto>, AggregateTrackProjectionRequestDto>($"api/jobs/{jobId}/results/aggregate-tracks/project", request, ct);
-
-    /// <summary>Alias for <see cref="ProjectAggregateTrackResultsAsync"/> kept for compatibility with earlier client code.</summary>
-    public async Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackResultsAsync(Guid jobId, AggregateTrackProjectionRequestDto request, CancellationToken ct = default)
-        => await ProjectAggregateTrackResultsAsync(jobId, request, ct);
-
-    public Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumResultsAsync(Guid jobId, CancellationToken ct = default)
-        => GetOptionalAsync<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>(
-            $"api/jobs/{jobId}/results/aggregate-albums", ct);
-
-    /// <summary>Projects a search job's raw results into aggregate album candidates using an explicit projection request.</summary>
-    public async Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> ProjectAggregateAlbumResultsAsync(Guid jobId, AggregateAlbumProjectionRequestDto request, CancellationToken ct = default)
-        => await PostOptionalAsync<SearchResultSnapshotDto<AggregateAlbumCandidateDto>, AggregateAlbumProjectionRequestDto>($"api/jobs/{jobId}/results/aggregate-albums/project", request, ct);
-
-    /// <summary>Alias for <see cref="ProjectAggregateAlbumResultsAsync"/> kept for compatibility with earlier client code.</summary>
-    public async Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumResultsAsync(Guid jobId, AggregateAlbumProjectionRequestDto request, CancellationToken ct = default)
-        => await ProjectAggregateAlbumResultsAsync(jobId, request, ct);
 
     public async Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
         => await PostOptionalSummaryAsync($"api/jobs/{searchJobId}/retrieve-folder", request, ct);
@@ -570,6 +841,19 @@ public sealed class SockseekApiClient
         return await GetRequiredAsync<PageDto<BrowseFileEntryDto>>(url, ct);
     }
 
+    public async Task<BrowseSearchPageDto> SearchUserSharesAsync(
+        Guid browseId,
+        string query,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        string url = $"api/user-browses/{browseId}/search?limit={limit}"
+            + QueryPart("query", query)
+            + QueryPart("cursor", cursor);
+        return await GetRequiredAsync<BrowseSearchPageDto>(url, ct);
+    }
+
     public Task<StartUserShareDownloadsResponseDto> StartUserShareDownloadsAsync(
         Guid browseId,
         StartUserShareDownloadsRequestDto request,
@@ -630,7 +914,7 @@ public sealed class SockseekApiClient
         => DeleteRequiredAsync($"api/chat/conversations/{conversationId}/history", ct);
 
     public async Task<AvailableRoomPageDto> GetAvailableRoomsAsync(
-        Sockseek.Core.Chat.ChatRoomKind? kind = null,
+        ServerChatRoomKind? kind = null,
         string? cursor = null,
         int limit = 100,
         bool refresh = false,
@@ -703,7 +987,7 @@ public sealed class SockseekApiClient
 
     public async Task<NotificationPageDto> GetNotificationsAsync(
         bool? unread = null,
-        Sockseek.Core.Chat.UserNotificationKind? kind = null,
+        ServerUserNotificationKind? kind = null,
         string? cursor = null,
         int limit = 100,
         CancellationToken ct = default)
