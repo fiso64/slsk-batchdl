@@ -271,7 +271,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         SearchViewSummaryDto view = await CreateReadySearchViewAsync(
             jobId,
             new CreateSearchViewRequestDto(
-                SearchViewProjectionKind.Files,
+                ServerSearchViewProjectionKind.Files,
                 request.SongQuery,
                 IncludeFullResults: request.IncludeFullResults),
             ct).ConfigureAwait(false);
@@ -320,7 +320,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         SearchViewSummaryDto view = await CreateReadySearchViewAsync(
             jobId,
             new CreateSearchViewRequestDto(
-                SearchViewProjectionKind.AggregateTracks,
+                ServerSearchViewProjectionKind.AggregateTracks,
                 request.SongQuery),
             ct).ConfigureAwait(false);
         var items = new List<AggregateTrackCandidateDto>();
@@ -362,7 +362,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         SearchViewSummaryDto view = await CreateReadySearchViewAsync(
             jobId,
             new CreateSearchViewRequestDto(
-                SearchViewProjectionKind.AggregateAlbums,
+                ServerSearchViewProjectionKind.AggregateAlbums,
                 AlbumQuery: request.AlbumQuery),
             ct).ConfigureAwait(false);
         var items = new List<AggregateAlbumCandidateDto>();
@@ -400,7 +400,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         SearchViewSummaryDto view = await CreateReadySearchViewAsync(
             jobId,
             new CreateSearchViewRequestDto(
-                SearchViewProjectionKind.AlbumDirectories,
+                ServerSearchViewProjectionKind.AlbumDirectories,
                 AlbumQuery: query),
             ct).ConfigureAwait(false);
         var items = new List<AlbumFolderDto>();

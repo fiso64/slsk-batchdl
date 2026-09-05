@@ -131,7 +131,7 @@ internal sealed class InteractiveCliCoordinator
             return;
 
         if (!interactiveEnabled
-            || search.DefaultProjection != SearchDefaultProjectionKind.Album
+            || search.DefaultProjection != ServerSearchDefaultProjectionKind.Album
             || search.AlbumQuery == null)
             return;
 
@@ -493,7 +493,7 @@ internal sealed class InteractiveCliCoordinator
 
     private static SearchJob ToSearchJob(SearchJobPayloadDto payload)
     {
-        var job = payload.DefaultProjection == SearchDefaultProjectionKind.Album
+        var job = payload.DefaultProjection == ServerSearchDefaultProjectionKind.Album
             && payload.AlbumQuery != null
             ? new SearchJob(new AlbumQuery
             {
@@ -530,8 +530,8 @@ internal sealed class InteractiveCliCoordinator
 
     private static DownloadBehaviorPolicyDto InteractiveDownloadBehavior(DownloadBehaviorPolicyDto? existing)
         => existing == null
-            ? new DownloadBehaviorPolicyDto(Album: DownloadBehavior.Manual, AlbumAggregate: DownloadBehavior.Manual)
-            : existing with { Album = DownloadBehavior.Manual, AlbumAggregate = DownloadBehavior.Manual };
+            ? new DownloadBehaviorPolicyDto(Album: ServerDownloadBehavior.Manual, AlbumAggregate: ServerDownloadBehavior.Manual)
+            : existing with { Album = ServerDownloadBehavior.Manual, AlbumAggregate = ServerDownloadBehavior.Manual };
 
     private SubmissionOptionsDto OptionsForWorkflow(Guid workflowId)
         => (rootOptions ?? new SubmissionOptionsDto()) with { WorkflowId = workflowId };

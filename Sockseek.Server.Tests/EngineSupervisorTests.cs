@@ -1199,7 +1199,7 @@ public class EngineSupervisorTests
                     new TrackSearchJobDraftDto(query),
                     options));
 
-            Assert.AreEqual(SearchSettingsBaselineKind.Music, preview.Baseline);
+            Assert.AreEqual(ServerSearchSettingsBaselineKind.Music, preview.Baseline);
             Assert.AreEqual(4321, preview.Settings.Values.Transfer?.MaxStaleTime);
             Assert.AreEqual(true, preview.Settings.Values.Skip?.SkipExisting);
             Assert.AreEqual("request", preview.Provenance["Skip.SkipExisting"]);
@@ -1260,7 +1260,7 @@ public class EngineSupervisorTests
                 search.JobId,
                 new StartFileDownloadsRequestDto(
                     [new FileCandidateRefDto("local", @"Artist\Track.mp3")],
-                    RequestedMode: ExtractionMode.General),
+                    RequestedMode: ServerExtractionMode.General),
                 CancellationToken.None);
 
             Assert.IsNotNull(downloads);
@@ -1303,7 +1303,7 @@ public class EngineSupervisorTests
                 search.JobId,
                 new StartFolderDownloadRequestDto(
                     new AlbumFolderRefDto("local", @"Organization\Folder"),
-                    RequestedMode: ExtractionMode.General),
+                    RequestedMode: ServerExtractionMode.General),
                 CancellationToken.None);
 
             Assert.IsNotNull(download);
@@ -1373,7 +1373,7 @@ public class EngineSupervisorTests
                     [new RemoteFileJobDraftDto(
                         target,
                         DownloadSettings: new DownloadSettingsPatchDto(
-                            Skip: new SkipSettingsPatchDto(SkipMode: SkipMode.Name)))]),
+                            Skip: new SkipSettingsPatchDto(SkipMode: ServerSkipMode.Name)))]),
                 CancellationToken.None));
         }
         finally
@@ -1408,7 +1408,7 @@ public class EngineSupervisorTests
                             Output: new OutputSettingsPatchDto(
                                 NameFormat: "{artist}/{title}",
                                 WritePlaylist: true),
-                            Extraction: new ExtractionSettingsPatchDto(RequestedMode: ExtractionMode.Song)))]),
+                            Extraction: new ExtractionSettingsPatchDto(RequestedMode: ServerExtractionMode.Song)))]),
                 CancellationToken.None);
 
             Assert.AreEqual(ServerJobKind.JobList, accepted.Kind);
@@ -1593,14 +1593,14 @@ public class EngineSupervisorTests
                     Guid.NewGuid(),
                     new StartFileDownloadsRequestDto(
                         [new FileCandidateRefDto("Peer", @"Share\File.bin")],
-                        RequestedMode: ExtractionMode.Album),
+                        RequestedMode: ServerExtractionMode.Album),
                     CancellationToken.None));
             await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
                 supervisor.StartFolderDownloadAsync(
                     Guid.NewGuid(),
                     new StartFolderDownloadRequestDto(
                         new AlbumFolderRefDto("Peer", "Share"),
-                        RequestedMode: ExtractionMode.Song),
+                        RequestedMode: ServerExtractionMode.Song),
                     CancellationToken.None));
 
             Assert.AreEqual(0, supervisor.StateStore.GetWorkflows().Count);

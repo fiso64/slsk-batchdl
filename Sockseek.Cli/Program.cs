@@ -323,8 +323,8 @@ internal static partial class Program
         backend.ActivityReceived += activity =>
         {
             if (activity.Payload is TrackBatchResolvedActivityDto batch
-                && batch.PrintOption == PrintOption.None
-                && ShouldPrintHumanBatchPreview(batch.PrintOption)
+                && batch.PrintOption == ServerPrintOption.None
+                && ShouldPrintHumanBatchPreview(batch.PrintOption.ToCore())
                 && cliReporter?.UsesLiveRendering != true)
             {
                 PrintCompactTrackBatchResolved(activity, batch, output);
@@ -503,8 +503,8 @@ internal static partial class Program
         backend.ActivityReceived += activity =>
         {
             if (activity.Payload is TrackBatchResolvedActivityDto batch
-                && batch.PrintOption == PrintOption.None
-                && ShouldPrintHumanBatchPreview(batch.PrintOption)
+                && batch.PrintOption == ServerPrintOption.None
+                && ShouldPrintHumanBatchPreview(batch.PrintOption.ToCore())
                 && cliReporter?.UsesLiveRendering != true)
             {
                 PrintCompactTrackBatchResolved(activity, batch, output);
@@ -1469,7 +1469,7 @@ internal static partial class Program
         SearchJobPayloadDto search,
         CancellationToken ct)
     {
-        if (search.DefaultProjection == SearchDefaultProjectionKind.Album
+        if (search.DefaultProjection == ServerSearchDefaultProjectionKind.Album
             && search.AlbumQuery != null)
         {
             var folders = await backend.GetFolderResultsAsync(
@@ -1579,7 +1579,7 @@ internal static partial class Program
     private static SearchJob ToSearchJob(SearchJobPayloadDto search, JobSummaryDto summary)
     {
         SearchJob job;
-        if (search.DefaultProjection == SearchDefaultProjectionKind.Album
+        if (search.DefaultProjection == ServerSearchDefaultProjectionKind.Album
             && search.AlbumQuery != null)
         {
             job = new SearchJob(ToAlbumQuery(search.AlbumQuery));
@@ -1618,8 +1618,8 @@ internal static partial class Program
     private static DownloadSettings RemotePrintSettings(DownloadSettings inherited, JobSummaryDto summary)
     {
         var settings = SettingsCloner.Clone(inherited);
-        if (summary.PrintOption != PrintOption.None)
-            settings.PrintOption = summary.PrintOption;
+        if (summary.PrintOption != ServerPrintOption.None)
+            settings.PrintOption = summary.PrintOption.ToCore();
         return settings;
     }
 

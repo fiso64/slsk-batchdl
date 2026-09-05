@@ -3,6 +3,7 @@ using Sockseek.Core;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Snapshots;
+using Sockseek.Server;
 
 namespace Sockseek.Cli;
 
@@ -99,11 +100,11 @@ internal static class CliSearchProjectionMapper
             file.RemoteFilename,
             file.Peer,
             file.File,
-            file.Visibility,
-            file.PreferenceTier,
+            file.Visibility.ToCore(),
+            file.PreferenceTier.ToCore(),
             file.NecessaryConditionsSatisfied,
-            file.SatisfiedPreferredConditions,
-            file.UnsatisfiedPreferredConditions);
+            file.SatisfiedPreferredConditions.Select(condition => condition.ToCore()).ToArray(),
+            file.UnsatisfiedPreferredConditions.Select(condition => condition.ToCore()).ToArray());
 
     public static AlbumFolderDto ToDto(AlbumFolder folder, bool includeFiles)
     {

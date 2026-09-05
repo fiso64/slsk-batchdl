@@ -27,7 +27,7 @@ internal static class EffectiveSettingsMapper
                 pair.Key.StartsWith(prefix, StringComparison.Ordinal)))
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         return new ResolveEffectiveSettingsResponseDto(
-            result.Baseline,
+            result.Baseline.ToServer(),
             new EffectiveDownloadSettingsDto(
                 SafeValues(settings),
                 settings.Output.OnComplete?.Count ?? 0,
@@ -56,11 +56,11 @@ internal static class EffectiveSettingsMapper
                 settings.Output.M3uFilePath,
                 settings.Output.IndexFilePath,
                 new IncompleteAlbumActionSettingsPatchDto(
-                    settings.Output.IncompleteAlbumAction.Kind,
+                    settings.Output.IncompleteAlbumAction.Kind?.ToServer(),
                     settings.Output.IncompleteAlbumAction.Path),
                 OnComplete: null,
                 settings.Output.AlbumArtOnly,
-                settings.Output.AlbumArtOption),
+                settings.Output.AlbumArtOption.ToServer()),
             Search: new SearchSettingsPatchDto(
                 FileConditions(settings.Search.NecessaryCond),
                 FileConditions(settings.Search.PreferredCond),
@@ -85,9 +85,9 @@ internal static class EffectiveSettingsMapper
             Skip: new SkipSettingsPatchDto(
                 settings.Skip.SkipExisting,
                 settings.Skip.SkipNotFound,
-                settings.Skip.SkipMode,
+                settings.Skip.SkipMode.ToServer(),
                 settings.Skip.SkipMusicDir,
-                settings.Skip.SkipModeMusicDir,
+                settings.Skip.SkipModeMusicDir.ToServer(),
                 settings.Skip.SkipCheckCond,
                 settings.Skip.SkipCheckPrefCond),
             Preprocess: new PreprocessSettingsPatchDto(
@@ -98,12 +98,12 @@ internal static class EffectiveSettingsMapper
                 Regex: null),
             Extraction: new ExtractionSettingsPatchDto(
                 Input: null,
-                settings.Extraction.InputType,
+                settings.Extraction.InputType.ToServer(),
                 settings.Extraction.MaxTracks,
                 settings.Extraction.Offset,
                 settings.Extraction.Reverse,
                 settings.Extraction.RemoveTracksFromSource,
-                settings.Extraction.RequestedMode,
+                settings.Extraction.RequestedMode?.ToServer(),
                 settings.Extraction.UpgradeToAlbum,
                 settings.Extraction.SetAlbumMinTrackCount,
                 settings.Extraction.SetAlbumMaxTrackCount),
@@ -132,7 +132,7 @@ internal static class EffectiveSettingsMapper
                 settings.Csv.TimeUnit,
                 settings.Csv.YtParse),
             Bandcamp: null,
-            settings.PrintOption);
+            settings.PrintOption.ToServer());
 
     private static FileConditionsPatchDto FileConditions(FileConditions conditions)
         => new(

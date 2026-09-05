@@ -277,11 +277,11 @@ public static class JobRequestMapper
 
     public static DownloadBehaviorPolicy ToDownloadBehaviorPolicy(DownloadBehaviorPolicyDto dto) => new()
     {
-        Default = dto.Default,
-        Song = dto.Song,
-        Album = dto.Album,
-        Aggregate = dto.Aggregate,
-        AlbumAggregate = dto.AlbumAggregate,
+        Default = dto.Default.ToCore(),
+        Song = dto.Song?.ToCore(),
+        Album = dto.Album?.ToCore(),
+        Aggregate = dto.Aggregate?.ToCore(),
+        AlbumAggregate = dto.AlbumAggregate?.ToCore(),
     };
 
     public static TJob ApplyDownloadBehavior<TJob>(TJob job, DownloadBehaviorPolicyDto? policy)

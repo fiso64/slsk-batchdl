@@ -70,7 +70,7 @@ public sealed class ChatApiTests
             Guid outgoingId = Guid.NewGuid();
             ChatMessageDto outgoing = await api.SendPrivateMessageAsync(
                 new SendPrivateMessageRequestDto(outgoingId, "Alice", "outbound"));
-            Assert.AreEqual(ChatMessageState.Sent, outgoing.State);
+            Assert.AreEqual(ServerChatMessageState.Sent, outgoing.State);
             SockseekApiRequestException conflict =
                 await Assert.ThrowsExceptionAsync<SockseekApiRequestException>(() =>
                     api.SendPrivateMessageAsync(
@@ -168,12 +168,12 @@ public sealed class ChatApiTests
             Assert.IsTrue((await api.GetConversationAsync(conversation.ConversationId))!.Archived);
 
             ChatRoomSummaryDto room = await api.JoinRoomAsync("indie");
-            Assert.AreEqual(ChatRoomJoinPhase.Joined, room.Phase);
+            Assert.AreEqual(ServerChatRoomJoinPhase.Joined, room.Phase);
             Assert.IsTrue((await api.GetRoomMembersAsync(room.RoomId)).Complete);
             ChatMessageDto roomMessage = await api.SendRoomMessageAsync(
                 room.RoomId,
                 new SendChatMessageRequestDto(Guid.NewGuid(), "hello room"));
-            Assert.AreEqual(ChatMessageState.Sent, roomMessage.State);
+            Assert.AreEqual(ServerChatMessageState.Sent, roomMessage.State);
 
             StateSnapshotDto snapshot = await api.GetRoomSnapshotAsync(room.RoomId);
             Assert.AreEqual(StateStreamScopeDto.ChatRoom(room.RoomId), snapshot.Scope);

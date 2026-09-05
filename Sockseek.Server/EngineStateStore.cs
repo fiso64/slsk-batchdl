@@ -659,7 +659,7 @@ public sealed class EngineStateStore
 
     public void PublishChatTarget(ChatTargetDeltaDto delta)
     {
-        StateStreamScopeDto scope = delta.Kind == ChatTargetKind.Direct
+        StateStreamScopeDto scope = delta.Kind == ServerChatTargetKind.Direct
             ? StateStreamScopeDto.ChatConversation(delta.TargetId)
             : StateStreamScopeDto.ChatRoom(delta.TargetId);
         IReadOnlyList<StateUpdateBatchDto> batches;

@@ -1,6 +1,3 @@
-using Sockseek.Core;
-using Sockseek.Core.Settings;
-
 namespace Sockseek.Api;
 
 public sealed record ResolveEffectiveSettingsRequestDto(
@@ -25,7 +22,7 @@ public sealed record EffectiveDownloadSettingsDto(
     bool BandcampHtmlFileConfigured);
 
 public sealed record ResolveEffectiveSettingsResponseDto(
-    SearchSettingsBaselineKind Baseline,
+    ServerSearchSettingsBaselineKind Baseline,
     EffectiveDownloadSettingsDto Settings,
     IReadOnlyList<string> AppliedAutoProfiles,
     IReadOnlyList<string> NamedProfiles,

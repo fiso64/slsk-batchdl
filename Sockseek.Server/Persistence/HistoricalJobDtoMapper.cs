@@ -161,10 +161,10 @@ internal static class HistoricalJobDtoMapper
             ServerJobKind.Search => new SearchJobPayloadDto(
                 Text(root, "QueryText") ?? job.QueryText ?? "",
                 DefaultFolderProjection(job) != null
-                    ? SearchDefaultProjectionKind.Album
+                    ? ServerSearchDefaultProjectionKind.Album
                     : DefaultFileProjection(job) != null
-                        ? SearchDefaultProjectionKind.Track
-                        : SearchDefaultProjectionKind.GenericFile,
+                        ? ServerSearchDefaultProjectionKind.Track
+                        : ServerSearchDefaultProjectionKind.GenericFile,
                 DefaultFileProjection(job) is { } fileProjection
                     ? ServerSnapshotMapper.ToSongQueryDto(fileProjection.Query)
                     : null,

@@ -574,7 +574,7 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
                 result.BitRate,
                 result.SampleRate,
                 result.DurationSeconds,
-                result.Visibility,
+                result.Visibility.ToServer(),
                 result.QueueLength,
                 result.ObservedAtUtc)).ToArray(),
             page.NextSequence);

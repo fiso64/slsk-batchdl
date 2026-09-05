@@ -452,7 +452,7 @@ public static class ServerHost
             .WithChatErrors();
 
         app.MapGet("/api/chat/rooms/available", async (
-            ChatRoomKind? kind,
+            ServerChatRoomKind? kind,
             string? cursor,
             int? limit,
             bool? refresh,
@@ -657,7 +657,7 @@ public static class ServerHost
 
         app.MapGet("/api/notifications", async (
             bool? unread,
-            UserNotificationKind? kind,
+            ServerUserNotificationKind? kind,
             string? cursor,
             int? limit,
             EngineSupervisor supervisor,

@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using Sockseek.Core;
 
 namespace Sockseek.Api;
 
@@ -164,7 +163,7 @@ public sealed record JobSummaryDto(
     IReadOnlyList<ResourceActionDto> AvailableActions,
     string? FailureDetail = null,
     ServerJobCancellationSource CancellationSource = ServerJobCancellationSource.None,
-    PrintOption PrintOption = PrintOption.None,
+    ServerPrintOption PrintOption = ServerPrintOption.None,
     Guid? SubmissionId = null,
     ServerJobRole Role = ServerJobRole.Legacy,
     DateTimeOffset? CreatedAtUtc = null,

@@ -1304,7 +1304,7 @@ public class RemoteCliBackendTests
 
             var firstWorkflowId = Guid.NewGuid();
             var secondWorkflowId = Guid.NewGuid();
-            var manual = new DownloadBehaviorPolicyDto(Album: DownloadBehavior.Manual);
+            var manual = new DownloadBehaviorPolicyDto(Album: ServerDownloadBehavior.Manual);
             var first = await monitor.SubmitAlbumJobAsync(new SubmitAlbumJobRequestDto(
                 new AlbumQueryDto("Artist", "Album", "", "", false),
                 new SubmissionOptionsDto(firstWorkflowId),
@@ -1403,7 +1403,7 @@ public class RemoteCliBackendTests
                 var submitted = await monitor.SubmitAlbumJobAsync(new SubmitAlbumJobRequestDto(
                     new AlbumQueryDto("Artist", "Album", "", "", false),
                     new SubmissionOptionsDto(workflowId),
-                    new DownloadBehaviorPolicyDto(Album: DownloadBehavior.Manual)));
+                    new DownloadBehaviorPolicyDto(Album: ServerDownloadBehavior.Manual)));
 
                 await WaitForConditionAsync(
                     monitor,

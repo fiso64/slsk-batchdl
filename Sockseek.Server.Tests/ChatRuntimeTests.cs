@@ -216,10 +216,10 @@ public sealed class ChatRuntimeTests
         await chat.StartAsync(CancellationToken.None);
 
         var joined = await chat.JoinRoomAsync("secret", remember: true, CancellationToken.None);
-        Assert.AreEqual(ChatRoomKind.Private, joined.Kind);
+        Assert.AreEqual(ServerChatRoomKind.Private, joined.Kind);
         Assert.IsTrue(joined.Owned);
         Assert.IsTrue(joined.Moderated);
-        Assert.AreEqual(ChatRoomJoinPhase.Joined, joined.Phase);
+        Assert.AreEqual(ServerChatRoomJoinPhase.Joined, joined.Phase);
         Assert.IsTrue(fake.LastJoinWasPrivate);
         RoomMemberPageDto members = await chat.GetRoomMembersAsync(
             joined.RoomId, null, 100, null, CancellationToken.None);
@@ -253,7 +253,7 @@ public sealed class ChatRuntimeTests
         fake.RaiseState(SoulseekClientStates.None);
         await WaitUntilAsync(() => roomChanges.Any(change =>
             change.TargetId == joined.RoomId
-            && change.Room?.Phase == ChatRoomJoinPhase.Disconnected
+            && change.Room?.Phase == ServerChatRoomJoinPhase.Disconnected
             && change.Room.MemberCount == 0));
     }
 
@@ -374,7 +374,7 @@ public sealed class ChatRuntimeTests
         await WaitUntilAsync(() => fake.RoomJoinCount == 2);
         await WaitUntilAsync(async () =>
             (await chat.GetRoomSummaryAsync(room.RoomId, CancellationToken.None))?.Phase
-            == ChatRoomJoinPhase.Joined);
+            == ServerChatRoomJoinPhase.Joined);
 
         await chat.LeaveRoomAsync(room.RoomId, CancellationToken.None);
         fake.RaiseState(SoulseekClientStates.None);
@@ -433,7 +433,7 @@ public sealed class ChatRuntimeTests
             "local", "broken") ?? throw new AssertFailedException();
         Assert.IsTrue(changes.Any(change =>
             change.TargetId == room.RoomId
-            && change.Room?.Phase == ChatRoomJoinPhase.Failed
+            && change.Room?.Phase == ServerChatRoomJoinPhase.Failed
             && change.Room.FailureReason?.Contains("join failed", StringComparison.Ordinal) == true));
     }
 

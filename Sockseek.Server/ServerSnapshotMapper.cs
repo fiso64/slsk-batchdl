@@ -47,7 +47,7 @@ public static class ServerSnapshotMapper
             BuildActions(job),
             job.FailureDetail,
             ToServerJobCancellationSource(job.CancellationSource),
-            job.PrintOption,
+            job.PrintOption.ToServer(),
             job.SubmissionId,
             ToServerJobRole(job.SemanticRole),
             job.CreatedAtUtc,
@@ -71,10 +71,10 @@ public static class ServerSnapshotMapper
             SearchJobSnapshotPayload search => new SearchJobPayloadDto(
                 search.QueryText,
                 search.DefaultFolderProjection != null
-                    ? SearchDefaultProjectionKind.Album
+                    ? ServerSearchDefaultProjectionKind.Album
                     : search.DefaultFileProjection != null
-                        ? SearchDefaultProjectionKind.Track
-                        : SearchDefaultProjectionKind.GenericFile,
+                        ? ServerSearchDefaultProjectionKind.Track
+                        : ServerSearchDefaultProjectionKind.GenericFile,
                 search.DefaultFileProjection == null
                     ? null
                     : ToSongQueryDto(search.DefaultFileProjection.Query),

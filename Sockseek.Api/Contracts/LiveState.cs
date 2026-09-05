@@ -1,7 +1,4 @@
 using System.Text.Json.Serialization;
-using Sockseek.Core;
-using Sockseek.Core.Sharing;
-using Sockseek.Core.Chat;
 
 namespace Sockseek.Api;
 
@@ -110,7 +107,7 @@ public sealed record ShareScanErrorSampleDto(
 public sealed record ShareScanStateDto(
     Guid ScanId,
     long Revision,
-    ShareScanPhase Phase,
+    ServerShareScanPhase Phase,
     DateTimeOffset StartedAtUtc,
     DateTimeOffset? CompletedAtUtc,
     long DirectoriesDiscovered,
@@ -162,7 +159,7 @@ public sealed record JobDisplayFieldsDto(
     string? ItemName,
     string? QueryText,
     IReadOnlyList<string> AppliedAutoProfiles,
-    PrintOption PrintOption);
+    ServerPrintOption PrintOption);
 
 /// <summary>
 /// A cohesive replacement for job lifecycle state. Nullable failure and timing fields
@@ -420,7 +417,7 @@ public sealed record StateDeltaDto(
 }
 
 public sealed record ChatTargetDeltaDto(
-    ChatTargetKind Kind,
+    ServerChatTargetKind Kind,
     Guid TargetId,
     ConversationSummaryDto? Conversation = null,
     ChatRoomSummaryDto? Room = null,
@@ -429,7 +426,7 @@ public sealed record ChatTargetDeltaDto(
     bool? HasEarlierMessages = null);
 
 public sealed record ChatTargetSnapshotDto(
-    ChatTargetKind Kind,
+    ServerChatTargetKind Kind,
     Guid TargetId,
     ConversationSummaryDto? Conversation,
     ChatRoomSummaryDto? Room,
@@ -528,7 +525,7 @@ public sealed record DownloadAttemptFailedActivityDto(
 public sealed record TrackBatchResolvedActivityDto(
     int DisplayId,
     bool IsNormal,
-    PrintOption PrintOption,
+    ServerPrintOption PrintOption,
     int PendingCount,
     int ExistingCount,
     int NotFoundCount) : ActivityPayloadDto;

@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using Sockseek.Core;
 
 namespace Sockseek.Api;
 
@@ -188,11 +187,11 @@ public sealed record RemoteDirectoryJobDraftDto(
 /// Null per-kind values inherit Default.
 /// </summary>
 public sealed record DownloadBehaviorPolicyDto(
-    DownloadBehavior Default = DownloadBehavior.Automatic,
-    DownloadBehavior? Song = null,
-    DownloadBehavior? Album = null,
-    DownloadBehavior? Aggregate = null,
-    DownloadBehavior? AlbumAggregate = null);
+    ServerDownloadBehavior Default = ServerDownloadBehavior.Automatic,
+    ServerDownloadBehavior? Song = null,
+    ServerDownloadBehavior? Album = null,
+    ServerDownloadBehavior? Aggregate = null,
+    ServerDownloadBehavior? AlbumAggregate = null);
 
 /// <summary>
 /// Submission-time settings layered over the daemon defaults.
@@ -217,7 +216,7 @@ public sealed record RetrieveFolderRequestDto(
 public sealed record StartFileDownloadsRequestDto(
     IReadOnlyList<FileCandidateRefDto> Files,
     SubmissionOptionsDto? Options = null,
-    ExtractionMode? RequestedMode = null);
+    ServerExtractionMode? RequestedMode = null);
 
 /// <summary>
 /// Starts an album/folder download from a selected search result folder.
@@ -227,7 +226,7 @@ public sealed record StartFolderDownloadRequestDto(
     SubmissionOptionsDto? Options = null,
     AlbumQueryDto? AlbumQuery = null,
     AlbumFolderDownloadSelectionDto? Selection = null,
-    ExtractionMode? RequestedMode = null);
+    ServerExtractionMode? RequestedMode = null);
 
 /// <summary>
 /// Describes how a selected album/folder should be downloaded.

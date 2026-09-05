@@ -52,7 +52,7 @@ public sealed class SearchViewCoordinatorTests
             await Assert.ThrowsExactlyAsync<SearchViewUnavailableException>(() =>
                 views.CreateAsync(
                     Guid.NewGuid(),
-                    new CreateSearchViewRequestDto(SearchViewProjectionKind.Files),
+                    new CreateSearchViewRequestDto(ServerSearchViewProjectionKind.Files),
                     CancellationToken.None));
 
             JobSummaryDto direct = await supervisor.SubmitSearchJobAsync(
@@ -108,7 +108,7 @@ public sealed class SearchViewCoordinatorTests
                 SearchViewSummaryDto created = (await views.CreateAsync(
                     job.JobId,
                     new CreateSearchViewRequestDto(
-                        SearchViewProjectionKind.GenericDirectories,
+                        ServerSearchViewProjectionKind.GenericDirectories,
                         new SongQueryDto(Title: "Restart Track"),
                         IncludeFullResults: true),
                     CancellationToken.None))!;
@@ -228,12 +228,12 @@ public sealed class SearchViewCoordinatorTests
             SearchViewCoordinator views = app.Services.GetRequiredService<SearchViewCoordinator>();
             SearchViewSummaryDto view = (await views.CreateAsync(
                 job.JobId,
-                new CreateSearchViewRequestDto(SearchViewProjectionKind.Files),
+                new CreateSearchViewRequestDto(ServerSearchViewProjectionKind.Files),
                 CancellationToken.None))!;
             SearchViewSummaryDto directoryView = (await views.CreateAsync(
                 job.JobId,
                 new CreateSearchViewRequestDto(
-                    SearchViewProjectionKind.GenericDirectories,
+                    ServerSearchViewProjectionKind.GenericDirectories,
                     new SongQueryDto(Title: "Track"),
                     IncludeFullResults: true),
                 CancellationToken.None))!;

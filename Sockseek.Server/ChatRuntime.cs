@@ -224,7 +224,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         => DeleteTargetHistoryAsync(ChatTargetKind.Direct, id, cancellationToken);
 
     public async Task<AvailableRoomPageDto> GetAvailableRoomsAsync(
-        ChatRoomKind? kind, string? cursor, int limit, bool refresh, CancellationToken cancellationToken)
+        ServerChatRoomKind? kind, string? cursor, int limit, bool refresh, CancellationToken cancellationToken)
     {
         limit = ChatIdentity.ValidatePageSize(limit);
         AvailableRoomCache cache = await GetAvailableRoomCacheAsync(refresh, cancellationToken).ConfigureAwait(false);
@@ -457,10 +457,10 @@ public sealed class ChatRuntime : IAsyncDisposable
             Account,
             targetId,
             cursor: null,
-            ChatLimits.LiveMessageTailSize,
+            ChatProtocol.LiveMessageTailSize,
             cancellationToken).ConfigureAwait(false);
         return new ChatTargetSnapshotDto(
-            kind,
+            kind.ToServer(),
             targetId,
             conversation,
             room,
@@ -570,8 +570,8 @@ public sealed class ChatRuntime : IAsyncDisposable
     }
 
     public Task<ChatPage<UserNotificationRecord>> GetNotificationsAsync(
-        bool? unread, UserNotificationKind? kind, string? cursor, int limit, CancellationToken cancellationToken)
-        => store.GetNotificationsAsync(Account, unread, kind, cursor, limit, cancellationToken);
+        bool? unread, ServerUserNotificationKind? kind, string? cursor, int limit, CancellationToken cancellationToken)
+        => store.GetNotificationsAsync(Account, unread, kind?.ToCore(), cursor, limit, cancellationToken);
 
     public Task<UserNotificationRecord?> GetNotificationAsync(Guid id, CancellationToken cancellationToken)
         => store.GetNotificationAsync(Account, id, cancellationToken);
@@ -1038,7 +1038,7 @@ public sealed class ChatRuntime : IAsyncDisposable
                         if (result.Notification is { } notification)
                             NotifyNotificationCommitted(notification);
                         PublishTarget(new ChatTargetDeltaDto(
-                            ChatTargetKind.Direct,
+                            ServerChatTargetKind.Direct,
                             result.Message.TargetId,
                             result.Conversation is null ? null : MapConversation(result.Conversation),
                             null,
@@ -1059,7 +1059,7 @@ public sealed class ChatRuntime : IAsyncDisposable
                     if (result.Notification is { } notification)
                         NotifyNotificationCommitted(notification);
                     PublishTarget(new ChatTargetDeltaDto(
-                        ChatTargetKind.Room,
+                        ServerChatTargetKind.Room,
                         result.Message.TargetId,
                         null,
                         result.Room is null ? null : MapRoom(result.Room),
@@ -1263,7 +1263,7 @@ public sealed class ChatRuntime : IAsyncDisposable
                         ex,
                         LogIdentity.Hash(persisted.RoomKey));
                 }
-                bool isPrivate = classification?.Kind == ChatRoomKind.Private
+                bool isPrivate = classification?.Kind == ServerChatRoomKind.Private
                                  || persisted.Kind == ChatRoomKind.Private;
                 RoomData joined = await Client.JoinRoomAsync(
                     persisted.DisplayName, isPrivate, cancellationToken).ConfigureAwait(false);
@@ -1392,11 +1392,11 @@ public sealed class ChatRuntime : IAsyncDisposable
             var candidate = new AvailableRoomDto(
                 key,
                 Math.Max(0, room.UserCount),
-                kind,
+                kind.ToServer(),
                 owned.Contains(key),
                 moderated.Contains(key));
             if (!target.TryGetValue(key, out AvailableRoomDto? current)
-                || kind == ChatRoomKind.Private && current.Kind != ChatRoomKind.Private)
+                || kind == ChatRoomKind.Private && current.Kind != ServerChatRoomKind.Private)
             {
                 target[key] = candidate;
             }
@@ -1636,10 +1636,10 @@ public sealed class ChatRuntime : IAsyncDisposable
             configured,
             room.RuntimeDesired,
             configured || room.RuntimeDesired,
-            runtime.Kind != ChatRoomKind.Unknown ? runtime.Kind : room.Kind,
+            (runtime.Kind != ChatRoomKind.Unknown ? runtime.Kind : room.Kind).ToServer(),
             owned,
             moderated,
-            runtime.Phase,
+            runtime.Phase.ToServer(),
             runtime.FailureReason,
             runtime.Members.Count,
             runtime.MemberRevision,
@@ -1655,7 +1655,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         ChatMessageRecord message)
     {
         PublishTarget(new ChatTargetDeltaDto(
-            message.TargetKind,
+            message.TargetKind.ToServer(),
             message.TargetId,
             prepared.Conversation is null ? null : MapConversation(prepared.Conversation),
             prepared.Room is null ? null : MapRoom(prepared.Room),
@@ -1687,7 +1687,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         if (conversation is null)
             return;
         PublishTarget(new ChatTargetDeltaDto(
-            ChatTargetKind.Direct,
+            ServerChatTargetKind.Direct,
             conversationId,
             MapConversation(conversation),
             null,
@@ -1704,7 +1704,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         if (snapshot is null)
             return;
         PublishTarget(new ChatTargetDeltaDto(
-            kind,
+            kind.ToServer(),
             targetId,
             snapshot.Conversation,
             snapshot.Room,
@@ -1722,7 +1722,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         if (room is null)
             return;
         PublishTarget(new ChatTargetDeltaDto(
-            ChatTargetKind.Room,
+            ServerChatTargetKind.Room,
             roomId,
             null,
             MapRoom(room),
@@ -2014,9 +2014,9 @@ public sealed class ChatRuntime : IAsyncDisposable
         {
             null or "" => static _ => true,
             "desired" => static room => room.Desired,
-            "joined" => static room => room.Phase == ChatRoomJoinPhase.Joined,
-            "failed" => static room => room.Phase == ChatRoomJoinPhase.Failed,
-            "disconnected" => static room => room.Phase == ChatRoomJoinPhase.Disconnected,
+            "joined" => static room => room.Phase == ServerChatRoomJoinPhase.Joined,
+            "failed" => static room => room.Phase == ServerChatRoomJoinPhase.Failed,
+            "disconnected" => static room => room.Phase == ServerChatRoomJoinPhase.Disconnected,
             _ => throw new ArgumentException("Invalid room state filter."),
         };
 

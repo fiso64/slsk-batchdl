@@ -1,7 +1,7 @@
-using Sockseek.Core;
+using Sockseek.Api;
 using Sockseek.Core.Services;
 
-namespace Sockseek.Api;
+namespace Sockseek.Server;
 
 /// <summary>
 /// Validates settings explicitly attached to an ordinary remote transfer. Global
@@ -41,7 +41,7 @@ public static class RemoteTransferSettingsValidator
                 || extraction.Offset != null
                 || extraction.Reverse != null
                 || extraction.RemoveTracksFromSource != null
-                || extraction.RequestedMode is ExtractionMode.Song or ExtractionMode.Album
+                || extraction.RequestedMode is ServerExtractionMode.Song or ServerExtractionMode.Album
                 || extraction.UpgradeToAlbum != null
                 || extraction.SetAlbumMinTrackCount != null
                 || extraction.SetAlbumMaxTrackCount != null))
@@ -76,8 +76,6 @@ public static class RemoteTransferSettingsValidator
         if (patch?.Output?.NameFormat is not { } format)
             return;
 
-        NameFormatRenderer.ValidateVariables(
-            format,
-            NameFormatVariableProvider.Supported);
+        NameFormatRenderer.ValidateVariables(format, NameFormatVariableProvider.Supported);
     }
 }

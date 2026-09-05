@@ -1483,7 +1483,7 @@ public sealed class EngineSupervisor
     {
         if (request.Files.Count == 0)
             throw new ArgumentException("At least one file is required.");
-        if (request.RequestedMode == ExtractionMode.Album)
+        if (request.RequestedMode == ServerExtractionMode.Album)
             throw new ArgumentException("A file selection cannot be interpreted as an album.");
 
         var sourceJob = GetRuntimeJob<Job>(sourceJobId);
@@ -1492,7 +1492,7 @@ public sealed class EngineSupervisor
 
         var summaries = new List<JobSummaryDto>();
 
-        if ((request.RequestedMode is null or ExtractionMode.Song)
+        if ((request.RequestedMode is null or ServerExtractionMode.Song)
             && sourceJob is SongJob manualSong && manualSong.IsAwaitingSelection)
         {
             if (request.Files.Count != 1)
@@ -1522,7 +1522,7 @@ public sealed class EngineSupervisor
             Job followUpJob = JobRequestMapper.CreateFileSelectionFollowUp(
                 sourceJob,
                 candidate,
-                request.RequestedMode);
+                request.RequestedMode?.ToCore());
 
             var followUpSettings = jobSettingsResolver.ResolveFollowUp(followUpJob, request.Options);
             summaries.Add(await SubmitFollowUpJobAsync(sourceJobId, sourceJob, followUpJob, followUpSettings, request.Options, isolateOptions: true, ct));
@@ -1582,7 +1582,7 @@ public sealed class EngineSupervisor
                     result.ResponseFileCount,
                     result.UploadSpeed,
                     result.HasFreeUploadSlot));
-            Job followUp = request.RequestedMode == ExtractionMode.General
+            Job followUp = request.RequestedMode == ServerExtractionMode.General
                 ? new RemoteFileJob(candidate.Target)
                 : new SongJob(Searcher.InferSongQuery(
                     candidate.Filename,
@@ -1628,7 +1628,7 @@ public sealed class EngineSupervisor
 
     public async Task<JobSummaryDto?> StartFolderDownloadAsync(Guid sourceJobId, StartFolderDownloadRequestDto request, CancellationToken ct)
     {
-        if (request.RequestedMode == ExtractionMode.Song)
+        if (request.RequestedMode == ServerExtractionMode.Song)
             throw new ArgumentException("A directory selection cannot be interpreted as one song.");
         var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
@@ -1644,7 +1644,7 @@ public sealed class EngineSupervisor
 
         folder = JobRequestMapper.ApplyFolderDownloadSelection(folder, request.Selection);
 
-        if (request.RequestedMode == ExtractionMode.General)
+        if (request.RequestedMode == ServerExtractionMode.General)
         {
             var directoryJob = JobRequestMapper.CreateRemoteDirectoryDownload(folder, request.Selection);
             directoryJob.ItemName = sourceJob.ItemName;
@@ -1695,7 +1695,7 @@ public sealed class EngineSupervisor
             return null;
         var folder = historical.Value.Folder;
         folder = JobRequestMapper.ApplyFolderDownloadSelection(folder, request.Selection);
-        if (request.RequestedMode == ExtractionMode.General)
+        if (request.RequestedMode == ServerExtractionMode.General)
         {
             var directoryJob = JobRequestMapper.CreateRemoteDirectoryDownload(folder, request.Selection);
             directoryJob.ItemName = historical.Value.Job.ItemName;
@@ -1847,7 +1847,7 @@ public sealed class EngineSupervisor
             result.BitRate,
             result.SampleRate,
             result.Length,
-            result.Visibility,
+            result.Visibility.ToServer(),
             result.QueueLength,
             result.ObservedAtUtc);
 

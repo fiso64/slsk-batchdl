@@ -231,7 +231,7 @@ public class CliBackendParityTests
                 var summary = await ctx.Backend.SubmitAlbumJobAsync(
                     new SubmitAlbumJobRequestDto(
                         new AlbumQueryDto("Artist", "Album", "", "", false),
-                        DownloadBehavior: new DownloadBehaviorPolicyDto(Album: DownloadBehavior.Manual)),
+                        DownloadBehavior: new DownloadBehaviorPolicyDto(Album: ServerDownloadBehavior.Manual)),
                     ctx.Token);
 
                 await WaitForJobStateAsync(ctx.Backend, summary.JobId, ExpectedJobStatus.AwaitingSelection);
@@ -281,7 +281,7 @@ public class CliBackendParityTests
                 var summary = await ctx.Backend.SubmitAlbumAggregateJobAsync(
                     new SubmitAlbumAggregateJobRequestDto(
                         new AlbumQueryDto("Artist", "", "", "", false),
-                        DownloadBehavior: new DownloadBehaviorPolicyDto(AlbumAggregate: DownloadBehavior.Manual)),
+                        DownloadBehavior: new DownloadBehaviorPolicyDto(AlbumAggregate: ServerDownloadBehavior.Manual)),
                     ctx.Token);
 
                 await WaitForJobStateAsync(ctx.Backend, summary.JobId, ExpectedJobStatus.AwaitingSelection);
@@ -582,8 +582,8 @@ public class CliBackendParityTests
                 InputType: "List",
                 Options: new SubmissionOptionsDto(),
                 ResultDownloadBehavior: new DownloadBehaviorPolicyDto(
-                    Album: DownloadBehavior.Manual,
-                    AlbumAggregate: DownloadBehavior.Manual)),
+                    Album: ServerDownloadBehavior.Manual,
+                    AlbumAggregate: ServerDownloadBehavior.Manual)),
             ctx.Token);
 
     private static SubmissionOptionsJobSettingsResolver CreateLocalResolver(

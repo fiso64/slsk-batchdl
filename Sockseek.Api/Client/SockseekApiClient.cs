@@ -914,7 +914,7 @@ public sealed class SockseekApiClient
         => DeleteRequiredAsync($"api/chat/conversations/{conversationId}/history", ct);
 
     public async Task<AvailableRoomPageDto> GetAvailableRoomsAsync(
-        Sockseek.Core.Chat.ChatRoomKind? kind = null,
+        ServerChatRoomKind? kind = null,
         string? cursor = null,
         int limit = 100,
         bool refresh = false,
@@ -987,7 +987,7 @@ public sealed class SockseekApiClient
 
     public async Task<NotificationPageDto> GetNotificationsAsync(
         bool? unread = null,
-        Sockseek.Core.Chat.UserNotificationKind? kind = null,
+        ServerUserNotificationKind? kind = null,
         string? cursor = null,
         int limit = 100,
         CancellationToken ct = default)

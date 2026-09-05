@@ -1,5 +1,3 @@
-using Sockseek.Core.Models;
-using Sockseek.Core.Services;
 using System.Text.Json.Serialization;
 
 namespace Sockseek.Api;
@@ -15,7 +13,7 @@ public enum SearchViewRetentionState
 }
 
 public sealed record CreateSearchViewRequestDto(
-    SearchViewProjectionKind? Kind = null,
+    ServerSearchViewProjectionKind? Kind = null,
     SongQueryDto? SongQuery = null,
     AlbumQueryDto? AlbumQuery = null,
     bool IncludeFullResults = false);
@@ -57,11 +55,11 @@ public sealed record SearchViewRevisionDto(
 
 public sealed record SearchViewFileDto(
     string Ref,
-    SearchResultVisibility Visibility,
-    SearchPreferenceTier PreferenceTier,
+    ServerSearchResultVisibility Visibility,
+    ServerSearchPreferenceTier PreferenceTier,
     bool NecessaryConditionsSatisfied,
-    IReadOnlyList<SearchPreferenceCondition> SatisfiedPreferredConditions,
-    IReadOnlyList<SearchPreferenceCondition> UnsatisfiedPreferredConditions,
+    IReadOnlyList<ServerSearchPreferenceCondition> SatisfiedPreferredConditions,
+    IReadOnlyList<ServerSearchPreferenceCondition> UnsatisfiedPreferredConditions,
     string RemoteFilename,
     PeerInfoDto Peer,
     FileMetadataDto File);
@@ -99,8 +97,8 @@ public sealed record PeerDirectoryRefDto(
 public sealed record SearchViewDirectoryDto(
     PeerDirectoryRefDto Ref,
     SearchViewDirectoryVisibility Visibility,
-    SearchPreferenceTier PreferenceTier,
-    IReadOnlyList<SearchPreferenceCondition> SatisfiedPreferredConditions,
+    ServerSearchPreferenceTier PreferenceTier,
+    IReadOnlyList<ServerSearchPreferenceCondition> SatisfiedPreferredConditions,
     long PublicMatchingFileCount,
     long LockedMatchingFileCount,
     long PublicMatchingBytes,

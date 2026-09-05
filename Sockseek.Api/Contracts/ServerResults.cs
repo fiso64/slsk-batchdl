@@ -1,6 +1,3 @@
-using Sockseek.Core.Models;
-using Sockseek.Core.Services;
-
 namespace Sockseek.Api;
 
 /// <summary>
@@ -71,7 +68,7 @@ public sealed record SearchRawResultDto(
     int? BitRate,
     int? SampleRate,
     int? Length,
-    SearchResultVisibility Visibility = SearchResultVisibility.Public,
+    ServerSearchResultVisibility Visibility = ServerSearchResultVisibility.Public,
     int? QueueLength = null,
     DateTimeOffset? ObservedAtUtc = null);
 

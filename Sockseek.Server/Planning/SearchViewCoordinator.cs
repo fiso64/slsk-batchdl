@@ -1134,7 +1134,7 @@ public sealed class SearchViewCoordinator(
         SongQuery? defaultSongQuery = null,
         AlbumQuery? defaultAlbumQuery = null)
     {
-        SearchViewProjectionKind kind = request.Kind ?? definition.DefaultProjection switch
+        SearchViewProjectionKind kind = request.Kind?.ToCore() ?? definition.DefaultProjection switch
         {
             SearchDefaultProjectionKind.GenericFile => SearchViewProjectionKind.GenericDirectories,
             SearchDefaultProjectionKind.Track => SearchViewProjectionKind.Files,
@@ -1279,12 +1279,13 @@ public sealed class SearchViewCoordinator(
     private static SearchViewFileDto ToDto(StoredSearchViewFile row)
         => new(
             row.Ref,
-            row.Input.Visibility,
-            row.PreferenceTier,
+            row.Input.Visibility.ToServer(),
+            row.PreferenceTier.ToServer(),
             row.NecessaryConditionsSatisfied,
-            row.SatisfiedPreferredConditions,
+            row.SatisfiedPreferredConditions.Select(condition => condition.ToServer()).ToArray(),
             row.ConfiguredPreferredConditions
                 .Except(row.SatisfiedPreferredConditions)
+                .Select(condition => condition.ToServer())
                 .ToArray(),
             row.Input.Filename,
             new PeerInfoDto(
@@ -1318,8 +1319,8 @@ public sealed class SearchViewCoordinator(
         return new(
             new PeerDirectoryRefDto(row.Ref, row.Username, row.FolderPath),
             visibility,
-            row.BestChild.PreferenceTier,
-            row.BestChild.SatisfiedPreferredConditions,
+            row.BestChild.PreferenceTier.ToServer(),
+            row.BestChild.SatisfiedPreferredConditions.Select(condition => condition.ToServer()).ToArray(),
             row.PublicMatchingFileCount,
             row.LockedMatchingFileCount,
             row.PublicMatchingBytes,
@@ -1371,7 +1372,7 @@ public sealed class SearchViewCoordinator(
     private static CreateSearchViewRequestDto ToDto(
         SearchViewProjectionDefinition projection)
         => new(
-            projection.Kind,
+            projection.Kind.ToServer(),
             projection.SongQuery == null
                 ? null
                 : ServerSnapshotMapper.ToSongQueryDto(projection.SongQuery),

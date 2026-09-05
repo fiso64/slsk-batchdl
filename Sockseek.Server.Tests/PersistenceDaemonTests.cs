@@ -279,7 +279,7 @@ public sealed class PersistenceDaemonTests
                 new SubmitSongJobRequestDto(
                     new SongQueryDto("Artist", "Manual Track"),
                     DownloadBehavior: new DownloadBehaviorPolicyDto(
-                        Song: Sockseek.Core.DownloadBehavior.Manual)),
+                        Song: ServerDownloadBehavior.Manual)),
                 CancellationToken.None);
             await awaitingSelection.Task.WaitAsync(TimeSpan.FromSeconds(5));
             supervisor.StateStore.JobUpserted -= OnManualJob;
@@ -519,7 +519,7 @@ public sealed class PersistenceDaemonTests
                     SearchViewSummaryDto fileView = await CreateCompleteSearchViewAsync(
                         views,
                         search.JobId,
-                        new CreateSearchViewRequestDto(SearchViewProjectionKind.Files));
+                        new CreateSearchViewRequestDto(ServerSearchViewProjectionKind.Files));
                     SearchViewFilePageDto results = (await views.GetFilesAsync(
                         fileView.ViewId,
                         fileView.Revision,
@@ -541,7 +541,7 @@ public sealed class PersistenceDaemonTests
                     SearchViewSummaryDto aggregateTrackView = await CreateCompleteSearchViewAsync(
                         views,
                         search.JobId,
-                        new CreateSearchViewRequestDto(SearchViewProjectionKind.AggregateTracks));
+                        new CreateSearchViewRequestDto(ServerSearchViewProjectionKind.AggregateTracks));
                     SearchViewAggregateTrackPageDto aggregateTracks = (await views
                         .GetAggregateTracksAsync(
                             aggregateTrackView.ViewId,
@@ -564,7 +564,7 @@ public sealed class PersistenceDaemonTests
                     SearchViewSummaryDto directoryView = await CreateCompleteSearchViewAsync(
                         views,
                         albumSearch.JobId,
-                        new CreateSearchViewRequestDto(SearchViewProjectionKind.AlbumDirectories));
+                        new CreateSearchViewRequestDto(ServerSearchViewProjectionKind.AlbumDirectories));
                     SearchViewDirectoryPageDto folders = (await views.GetDirectoriesAsync(
                         directoryView.ViewId,
                         directoryView.Revision,
@@ -578,7 +578,7 @@ public sealed class PersistenceDaemonTests
                     SearchViewSummaryDto aggregateAlbumView = await CreateCompleteSearchViewAsync(
                         views,
                         albumSearch.JobId,
-                        new CreateSearchViewRequestDto(SearchViewProjectionKind.AggregateAlbums));
+                        new CreateSearchViewRequestDto(ServerSearchViewProjectionKind.AggregateAlbums));
                     SearchViewAggregateAlbumPageDto aggregateAlbums = (await views
                         .GetAggregateAlbumsAsync(
                             aggregateAlbumView.ViewId,

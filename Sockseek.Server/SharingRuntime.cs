@@ -307,7 +307,7 @@ public sealed class SharingRuntime : IAsyncDisposable
         var dto = new ShareScanStateDto(
             scanId,
             revision,
-            state.Phase,
+            state.Phase.ToServer(),
             state.StartedAtUtc ?? DateTimeOffset.UtcNow,
             state.FinishedAtUtc,
             result?.DirectoriesVisited ?? progress?.DirectoriesDiscovered ?? 0,
@@ -361,7 +361,7 @@ public sealed class SharingRuntime : IAsyncDisposable
         }
         bool configured = settings.Sharing.Roots.Count > 0;
         bool catalogReady = metadata is not null;
-        bool catalogStale = catalogReady && last?.Phase == ShareScanPhase.Failed;
+        bool catalogStale = catalogReady && last?.Phase == ServerShareScanPhase.Failed;
         DaemonFeatureState state;
         string? reason;
         if (!configured)

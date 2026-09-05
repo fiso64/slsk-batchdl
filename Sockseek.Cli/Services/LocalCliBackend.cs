@@ -443,17 +443,17 @@ internal sealed class LocalCliBackend
 
         if (request.Files.Count == 0)
             throw new ArgumentException("At least one file is required.");
-        if (request.RequestedMode == ExtractionMode.Album)
+        if (request.RequestedMode == ServerExtractionMode.Album)
             throw new ArgumentException("A file selection cannot be interpreted as an album.");
 
         var summaries = new List<JobSummaryDto>();
-        if (request.RequestedMode == ExtractionMode.General
+        if (request.RequestedMode == ServerExtractionMode.General
             && request.Options?.DownloadSettings is { } explicitPatch)
         {
             RemoteTransferSettingsValidator.ValidateExplicitPatch(explicitPatch);
         }
 
-        if ((request.RequestedMode is null or ExtractionMode.Song)
+        if ((request.RequestedMode is null or ServerExtractionMode.Song)
             && sourceJob is SongJob manualSong && manualSong.IsAwaitingSelection)
         {
             if (request.Files.Count != 1)
@@ -484,7 +484,7 @@ internal sealed class LocalCliBackend
             Job followUpJob = JobRequestMapper.CreateFileSelectionFollowUp(
                 sourceJob,
                 candidate,
-                request.RequestedMode);
+                request.RequestedMode?.ToCore());
             var settings = BuildFollowUpSettings(sourceJob, followUpJob, request.Options);
             if (followUpJob is RemoteFileJob)
             {
@@ -506,7 +506,7 @@ internal sealed class LocalCliBackend
     public Task<JobSummaryDto?> StartFolderDownloadAsync(Guid sourceJobId, StartFolderDownloadRequestDto request, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        if (request.RequestedMode == ExtractionMode.Song)
+        if (request.RequestedMode == ServerExtractionMode.Song)
             throw new ArgumentException("A directory selection cannot be interpreted as one song.");
 
         var sourceJob = GetRuntimeJob<Job>(sourceJobId);
@@ -523,13 +523,13 @@ internal sealed class LocalCliBackend
 
         folder = JobRequestMapper.ApplyFolderDownloadSelection(folder, request.Selection);
 
-        if (request.RequestedMode == ExtractionMode.General
+        if (request.RequestedMode == ServerExtractionMode.General
             && request.Options?.DownloadSettings is { } explicitPatch)
         {
             RemoteTransferSettingsValidator.ValidateExplicitPatch(explicitPatch);
         }
 
-        if (request.RequestedMode == ExtractionMode.General)
+        if (request.RequestedMode == ServerExtractionMode.General)
         {
             var directoryJob = JobRequestMapper.CreateRemoteDirectoryDownload(folder, request.Selection);
             directoryJob.ItemName = sourceJob.ItemName;

@@ -73,7 +73,7 @@ public class LocalCliBackendTests
                             Output: new OutputSettingsPatchDto(
                                 NameFormat: "{artist}/{title}",
                                 WritePlaylist: true),
-                            Extraction: new ExtractionSettingsPatchDto(RequestedMode: ExtractionMode.Song)))]));
+                            Extraction: new ExtractionSettingsPatchDto(RequestedMode: ServerExtractionMode.Song)))]));
 
             Assert.AreEqual(ServerJobKind.JobList, accepted.Kind);
             Assert.AreNotEqual(Guid.Empty, accepted.WorkflowId);

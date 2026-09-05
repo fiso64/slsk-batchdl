@@ -84,7 +84,7 @@ public sealed class EngineActivityDtoAdapter
                 new TrackBatchResolvedActivityDto(
                     summary.DisplayId,
                     change.Owner.Kind == JobSnapshotKind.JobList,
-                    change.Owner.PrintOption,
+                    change.Owner.PrintOption.ToServer(),
                     change.Pending.Count,
                     change.Existing.Count,
                     change.NotFound.Count),

@@ -92,13 +92,13 @@ public class OpenApiContractTests
             .GetProperty("schemas");
         foreach (string enumSchema in new[]
         {
-            nameof(SearchViewProjectionKind),
+            nameof(ServerSearchViewProjectionKind),
             nameof(SearchViewRetentionState),
             nameof(SearchViewDirectoryVisibility),
             nameof(SearchViewDirectoryRetrievalState),
-            nameof(SearchResultVisibility),
-            nameof(SearchPreferenceTier),
-            nameof(SearchPreferenceCondition),
+            nameof(ServerSearchResultVisibility),
+            nameof(ServerSearchPreferenceTier),
+            nameof(ServerSearchPreferenceCondition),
         })
         {
             JsonElement values = schemas.GetProperty(enumSchema).GetProperty("enum");
@@ -352,6 +352,48 @@ public class OpenApiContractTests
 
         var metadataIndex = assemblyVersion.IndexOf('+', StringComparison.Ordinal);
         return metadataIndex >= 0 ? assemblyVersion[..metadataIndex] : assemblyVersion;
+    }
+
+    [TestMethod]
+    public void ApiAssembly_DoesNotDependOnCore()
+    {
+        Assembly apiAssembly = typeof(SockseekApiClient).Assembly;
+        string coreAssemblyName = typeof(DownloadSettings).Assembly.GetName().Name!;
+
+        Assert.IsFalse(
+            apiAssembly.GetReferencedAssemblies().Any(reference =>
+                string.Equals(reference.Name, coreAssemblyName, StringComparison.Ordinal)),
+            "The public API contracts and remote client must not reference Sockseek.Core.");
+    }
+
+    [TestMethod]
+    public void ApiOwnedSettingsEnums_PreserveExistingWireRepresentationsAndPrintFlags()
+    {
+        ServerPrintOption combinedPrint = ServerPrintOption.Jobs | ServerPrintOption.Full;
+        var settings = new DownloadSettingsPatchDto(
+            Output: new OutputSettingsPatchDto(AlbumArtOption: ServerAlbumArtOption.Largest),
+            Skip: new SkipSettingsPatchDto(SkipMode: ServerSkipMode.Index),
+            Extraction: new ExtractionSettingsPatchDto(
+                InputType: ServerInputType.Soulseek,
+                RequestedMode: ServerExtractionMode.General),
+            PrintOption: combinedPrint);
+        var behavior = new DownloadBehaviorPolicyDto(Album: ServerDownloadBehavior.Manual);
+        using JsonDocument settingsJson = JsonDocument.Parse(JsonSerializer.Serialize(
+            settings,
+            SockseekApiJsonContext.Default.DownloadSettingsPatchDto));
+        using JsonDocument behaviorJson = JsonDocument.Parse(JsonSerializer.Serialize(
+            behavior,
+            SockseekApiJsonContext.Default.DownloadBehaviorPolicyDto));
+
+        Assert.AreEqual(JsonValueKind.Number, settingsJson.RootElement.GetProperty("printOption").ValueKind);
+        Assert.AreEqual((int)combinedPrint, settingsJson.RootElement.GetProperty("printOption").GetInt32());
+        Assert.AreEqual(JsonValueKind.Number, settingsJson.RootElement.GetProperty("output").GetProperty("albumArtOption").ValueKind);
+        Assert.AreEqual(JsonValueKind.Number, settingsJson.RootElement.GetProperty("skip").GetProperty("skipMode").ValueKind);
+        Assert.AreEqual(JsonValueKind.Number, settingsJson.RootElement.GetProperty("extraction").GetProperty("inputType").ValueKind);
+        Assert.AreEqual(JsonValueKind.Number, settingsJson.RootElement.GetProperty("extraction").GetProperty("requestedMode").ValueKind);
+        Assert.AreEqual("Manual", behaviorJson.RootElement.GetProperty("album").GetString());
+        Assert.AreEqual(combinedPrint, (PrintOption.Jobs | PrintOption.Full).ToServer());
+        Assert.AreEqual(PrintOption.Jobs | PrintOption.Full, combinedPrint.ToCore());
     }
 
     [TestMethod]

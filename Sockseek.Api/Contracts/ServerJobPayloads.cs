@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using Sockseek.Core.Services;
 
 namespace Sockseek.Api;
 
@@ -79,7 +78,7 @@ public sealed record ExtractJobPayloadDto(
 /// <param name="Revision">Current raw observation revision.</param>
 public sealed record SearchJobPayloadDto(
     string QueryText,
-    SearchDefaultProjectionKind DefaultProjection,
+    ServerSearchDefaultProjectionKind DefaultProjection,
     SongQueryDto? SongQuery,
     AlbumQueryDto? AlbumQuery,
     bool IncludeFullResults,
